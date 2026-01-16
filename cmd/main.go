@@ -182,10 +182,19 @@ func findLatestSchema(ctx context.Context, client S3Client, bucket, prefix, sche
 		return "", "", err
 	}
 
-	// Filter objects that match the schema file name pattern
-	var versions []string
+	// Extract keys from response
+	var keys []string
 	for _, obj := range resp.Contents {
-		key := *obj.Key
+		keys = append(keys, *obj.Key)
+	}
+
+	return findLatestVersion(keys, prefix, schemaFileName)
+}
+
+// findLatestVersion extracts versions from S3 keys and returns the latest one
+func findLatestVersion(keys []string, prefix, schemaFileName string) (string, string, error) {
+	var versions []string
+	for _, key := range keys {
 		// Check if the object key ends with the schema file name
 		if path.Base(key) == schemaFileName {
 			// Extract the version part (directory name)
@@ -256,10 +265,14 @@ func applySchema(schema []byte) error {
 	return cmd.Run()
 }
 
-func checkCompletionMarker(ctx context.Context, client S3Client, bucket, schemaKey, completedFileName string) (bool, error) {
-	// Construct the completion marker key alongside the schema file
+// buildCompletionMarkerKey constructs the S3 key for the completion marker
+func buildCompletionMarkerKey(schemaKey, completedFileName string) string {
 	schemaDir := path.Dir(schemaKey)
-	markerKey := path.Join(schemaDir, completedFileName)
+	return path.Join(schemaDir, completedFileName)
+}
+
+func checkCompletionMarker(ctx context.Context, client S3Client, bucket, schemaKey, completedFileName string) (bool, error) {
+	markerKey := buildCompletionMarkerKey(schemaKey, completedFileName)
 
 	// Check if the object exists
 	_, err := client.HeadObject(ctx, &s3.HeadObjectInput{
@@ -279,9 +292,7 @@ func checkCompletionMarker(ctx context.Context, client S3Client, bucket, schemaK
 }
 
 func createCompletionMarker(ctx context.Context, client S3Client, bucket, schemaKey, completedFileName string) error {
-	// Construct the completion marker key alongside the schema file
-	schemaDir := path.Dir(schemaKey)
-	markerKey := path.Join(schemaDir, completedFileName)
+	markerKey := buildCompletionMarkerKey(schemaKey, completedFileName)
 
 	// Upload an empty file as the completion marker
 	_, err := client.PutObject(ctx, &s3.PutObjectInput{

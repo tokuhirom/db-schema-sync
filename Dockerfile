@@ -5,7 +5,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN go build -o db-schema-sync cmd/main.go
+RUN go build -o db-schema-sync ./cmd/db-schema-sync
 
 FROM alpine:latest
 

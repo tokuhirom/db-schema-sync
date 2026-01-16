@@ -2,7 +2,7 @@
 
 # Variables
 BINARY_NAME=db-schema-sync
-MAIN_FILE=cmd/main.go
+MAIN_FILE=./cmd/db-schema-sync
 DOCKER_IMAGE=db-schema-sync
 
 # Default target

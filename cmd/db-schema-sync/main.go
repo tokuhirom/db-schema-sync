@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"log/slog"
@@ -13,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/alecthomas/kong"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -26,17 +26,33 @@ type S3Client interface {
 	PutObject(ctx context.Context, params *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error)
 }
 
-var (
-	pathPrefix    = flag.String("path-prefix", "", "S3 path prefix (e.g., 'schemas/' or 'prod/schemas/')")
-	schemaFile    = flag.String("schema-file", "schema.sql", "Schema file name within the path prefix")
-	interval      = flag.Duration("interval", 60*time.Second, "Polling interval")
-	completedFile = flag.String("completed-file", "completed", "Name of completion marker file to create alongside schema file (default: 'completed')")
+// CLI defines command line options
+type CLI struct {
+	// S3 settings
+	S3Bucket   string `help:"S3 bucket name" env:"S3_BUCKET" required:""`
+	PathPrefix string `help:"S3 path prefix (e.g., 'schemas/')" env:"PATH_PREFIX" required:""`
+	SchemaFile string `help:"Schema file name" env:"SCHEMA_FILE" default:"schema.sql"`
+
+	// Database settings
+	DBHost     string `help:"Database host" env:"DB_HOST" required:""`
+	DBPort     string `help:"Database port" env:"DB_PORT" required:""`
+	DBUser     string `help:"Database user" env:"DB_USER" required:""`
+	DBPassword string `help:"Database password" env:"DB_PASSWORD" required:""`
+	DBName     string `help:"Database name" env:"DB_NAME" required:""`
+
+	// Polling settings
+	Interval      time.Duration `help:"Polling interval" env:"INTERVAL" default:"1m"`
+	CompletedFile string        `help:"Completion marker file name" env:"COMPLETED_FILE" default:"completed"`
 
 	// Lifecycle hooks
-	onStart          = flag.String("on-start", "", "Command to run when the process starts")
-	onS3FetchError   = flag.String("on-s3-fetch-error", "", "Command to run when S3 fetch fails 3 times consecutively")
-	onApplyFailed    = flag.String("on-apply-failed", "", "Command to run when schema application fails")
-	onApplySucceeded = flag.String("on-apply-succeeded", "", "Command to run after schema is successfully applied")
+	OnStart          string `help:"Command to run when the process starts" env:"ON_START"`
+	OnS3FetchError   string `help:"Command to run when S3 fetch fails 3 times consecutively" env:"ON_S3_FETCH_ERROR"`
+	OnApplyFailed    string `help:"Command to run when schema application fails" env:"ON_APPLY_FAILED"`
+	OnApplySucceeded string `help:"Command to run after schema is successfully applied" env:"ON_APPLY_SUCCEEDED"`
+}
+
+var (
+	cli CLI
 
 	// In-memory state
 	lastAppliedVersion      string
@@ -44,21 +60,19 @@ var (
 )
 
 func main() {
-	flag.Parse()
-
-	if *pathPrefix == "" {
-		slog.Error("path-prefix is required")
-		os.Exit(1)
-	}
+	kong.Parse(&cli,
+		kong.Name("db-schema-sync"),
+		kong.Description("Synchronize database schemas from S3 using psqldef"),
+	)
 
 	// Ensure pathPrefix ends with a slash
-	if (*pathPrefix)[len(*pathPrefix)-1] != '/' {
-		*pathPrefix += "/"
+	if cli.PathPrefix != "" && cli.PathPrefix[len(cli.PathPrefix)-1] != '/' {
+		cli.PathPrefix += "/"
 	}
 
 	// Run on-start command if specified
-	if *onStart != "" {
-		if err := runCommand(*onStart); err != nil {
+	if cli.OnStart != "" {
+		if err := runCommand(cli.OnStart); err != nil {
 			slog.Warn("on-start command failed", "error", err)
 		}
 	}
@@ -71,8 +85,8 @@ func main() {
 			slog.Error("Error in run", "error", err)
 		}
 
-		slog.Info("Waiting before next poll", "interval", *interval)
-		time.Sleep(*interval)
+		slog.Info("Waiting before next poll", "interval", cli.Interval)
+		time.Sleep(cli.Interval)
 	}
 }
 
@@ -86,25 +100,20 @@ func run(ctx context.Context) error {
 	}
 	client := s3.NewFromConfig(cfg)
 
-	bucket := os.Getenv("S3_BUCKET")
-	if bucket == "" {
-		return fmt.Errorf("S3_BUCKET environment variable not set")
-	}
-
-	return runWithClient(ctx, client, bucket)
+	return runWithClient(ctx, client, cli.S3Bucket)
 }
 
 func runWithClient(ctx context.Context, client S3Client, bucket string) error {
 	slog.Info("Finding latest schema...")
 
 	// Find the latest schema file
-	latestSchemaKey, latestVersion, err := findLatestSchema(ctx, client, bucket, *pathPrefix, *schemaFile)
+	latestSchemaKey, latestVersion, err := findLatestSchema(ctx, client, bucket, cli.PathPrefix, cli.SchemaFile)
 	if err != nil {
 		consecutiveFailureCount++
 		slog.Error("Failed to find latest schema", "error", err, "consecutive_failures", consecutiveFailureCount)
 
 		if consecutiveFailureCount >= maxConsecutiveFailures {
-			runHook("on-s3-fetch-error", *onS3FetchError)
+			runHook("on-s3-fetch-error", cli.OnS3FetchError)
 		}
 		return fmt.Errorf("failed to find latest schema: %w", err)
 	}
@@ -118,8 +127,8 @@ func runWithClient(ctx context.Context, client S3Client, bucket string) error {
 	}
 
 	// Check if completion marker already exists in S3
-	if *completedFile != "" {
-		exists, err := checkCompletionMarker(ctx, client, bucket, latestSchemaKey, *completedFile)
+	if cli.CompletedFile != "" {
+		exists, err := checkCompletionMarker(ctx, client, bucket, latestSchemaKey, cli.CompletedFile)
 		if err != nil {
 			slog.Warn("Could not check completion marker", "error", err)
 		} else if exists {
@@ -134,14 +143,14 @@ func runWithClient(ctx context.Context, client S3Client, bucket string) error {
 	if err != nil {
 		consecutiveFailureCount++
 		if consecutiveFailureCount >= maxConsecutiveFailures {
-			runHook("on-s3-fetch-error", *onS3FetchError)
+			runHook("on-s3-fetch-error", cli.OnS3FetchError)
 		}
 		return fmt.Errorf("failed to download schema: %w", err)
 	}
 
 	// Apply schema using psqldef
 	if err := applySchema(schema); err != nil {
-		runHook("on-apply-failed", *onApplyFailed)
+		runHook("on-apply-failed", cli.OnApplyFailed)
 		return fmt.Errorf("failed to apply schema: %w", err)
 	}
 
@@ -149,14 +158,14 @@ func runWithClient(ctx context.Context, client S3Client, bucket string) error {
 	lastAppliedVersion = latestVersion
 
 	// Create completion marker in S3
-	if *completedFile != "" {
-		if err := createCompletionMarker(ctx, client, bucket, latestSchemaKey, *completedFile); err != nil {
+	if cli.CompletedFile != "" {
+		if err := createCompletionMarker(ctx, client, bucket, latestSchemaKey, cli.CompletedFile); err != nil {
 			slog.Warn("Could not create completion marker", "error", err)
 		}
 	}
 
 	// Run on-apply-succeeded hook
-	runHook("on-apply-succeeded", *onApplySucceeded)
+	runHook("on-apply-succeeded", cli.OnApplySucceeded)
 
 	slog.Info("Successfully applied schema", "version", latestVersion)
 	return nil
@@ -246,19 +255,8 @@ func applySchema(schema []byte) error {
 		return err
 	}
 
-	// Get database connection details from environment variables
-	host := os.Getenv("DB_HOST")
-	port := os.Getenv("DB_PORT")
-	user := os.Getenv("DB_USER")
-	password := os.Getenv("DB_PASSWORD")
-	database := os.Getenv("DB_NAME")
-
-	if host == "" || port == "" || user == "" || password == "" || database == "" {
-		return fmt.Errorf("database connection environment variables not set")
-	}
-
 	// Run psqldef to apply schema
-	cmd := exec.Command("psqldef", "-U", user, "-h", host, "-p", port, "--password", password, database, "--file", tmpFile.Name())
+	cmd := exec.Command("psqldef", "-U", cli.DBUser, "-h", cli.DBHost, "-p", cli.DBPort, "--password", cli.DBPassword, cli.DBName, "--file", tmpFile.Name())
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 

@@ -1,0 +1,22 @@
+FROM alpine:latest
+
+ARG TARGETARCH
+
+# Install curl for psqldef download
+RUN apk add --no-cache curl ca-certificates
+
+# Download and install psqldef based on architecture
+RUN case "${TARGETARCH}" in \
+      amd64) ARCH="amd64" ;; \
+      arm64) ARCH="arm64" ;; \
+      *) echo "Unsupported architecture: ${TARGETARCH}" && exit 1 ;; \
+    esac && \
+    curl -LO "https://github.com/sqldef/sqldef/releases/download/v0.17.24/psqldef_linux_${ARCH}.tar.gz" && \
+    tar xzf "psqldef_linux_${ARCH}.tar.gz" && \
+    mv psqldef /usr/local/bin/ && \
+    rm "psqldef_linux_${ARCH}.tar.gz"
+
+# Copy the pre-built binary from goreleaser
+COPY db-schema-sync /usr/local/bin/db-schema-sync
+
+ENTRYPOINT ["db-schema-sync"]

@@ -28,6 +28,62 @@ func TestFindLatestVersion(t *testing.T) {
 			wantErr:        false,
 		},
 		{
+			name: "handles v10 correctly (semver sorting)",
+			keys: []string{
+				"schemas/v1/schema.sql",
+				"schemas/v2/schema.sql",
+				"schemas/v10/schema.sql",
+				"schemas/v9/schema.sql",
+			},
+			prefix:         "schemas/",
+			schemaFileName: "schema.sql",
+			wantKey:        "schemas/v10/schema.sql",
+			wantVersion:    "v10",
+			wantErr:        false,
+		},
+		{
+			name: "handles full semver versions",
+			keys: []string{
+				"schemas/1.0.0/schema.sql",
+				"schemas/1.1.0/schema.sql",
+				"schemas/2.0.0/schema.sql",
+				"schemas/1.10.0/schema.sql",
+			},
+			prefix:         "schemas/",
+			schemaFileName: "schema.sql",
+			wantKey:        "schemas/2.0.0/schema.sql",
+			wantVersion:    "2.0.0",
+			wantErr:        false,
+		},
+		{
+			name: "handles semver with v prefix",
+			keys: []string{
+				"schemas/v1.0.0/schema.sql",
+				"schemas/v1.1.0/schema.sql",
+				"schemas/v2.0.0/schema.sql",
+				"schemas/v1.10.0/schema.sql",
+			},
+			prefix:         "schemas/",
+			schemaFileName: "schema.sql",
+			wantKey:        "schemas/v2.0.0/schema.sql",
+			wantVersion:    "v2.0.0",
+			wantErr:        false,
+		},
+		{
+			name: "handles patch versions correctly",
+			keys: []string{
+				"schemas/v1.0.0/schema.sql",
+				"schemas/v1.0.1/schema.sql",
+				"schemas/v1.0.10/schema.sql",
+				"schemas/v1.0.2/schema.sql",
+			},
+			prefix:         "schemas/",
+			schemaFileName: "schema.sql",
+			wantKey:        "schemas/v1.0.10/schema.sql",
+			wantVersion:    "v1.0.10",
+			wantErr:        false,
+		},
+		{
 			name: "handles timestamp versions",
 			keys: []string{
 				"schemas/20240101120000/schema.sql",
@@ -97,6 +153,149 @@ func TestFindLatestVersion(t *testing.T) {
 				if gotVersion != tt.wantVersion {
 					t.Errorf("findLatestVersion() gotVersion = %v, want %v", gotVersion, tt.wantVersion)
 				}
+			}
+		})
+	}
+}
+
+func TestFindMaxVersion(t *testing.T) {
+	tests := []struct {
+		name     string
+		versions []string
+		want     string
+		wantErr  bool
+	}{
+		{
+			name:     "simple versions",
+			versions: []string{"v1", "v2", "v3"},
+			want:     "v3",
+			wantErr:  false,
+		},
+		{
+			name:     "v10 is greater than v9",
+			versions: []string{"v1", "v9", "v10", "v2"},
+			want:     "v10",
+			wantErr:  false,
+		},
+		{
+			name:     "semver without v prefix",
+			versions: []string{"1.0.0", "1.1.0", "2.0.0", "1.10.0"},
+			want:     "2.0.0",
+			wantErr:  false,
+		},
+		{
+			name:     "semver with v prefix",
+			versions: []string{"v1.0.0", "v1.1.0", "v2.0.0", "v1.10.0"},
+			want:     "v2.0.0",
+			wantErr:  false,
+		},
+		{
+			name:     "patch versions",
+			versions: []string{"v1.0.1", "v1.0.10", "v1.0.2", "v1.0.9"},
+			want:     "v1.0.10",
+			wantErr:  false,
+		},
+		{
+			name:     "mixed major versions",
+			versions: []string{"v1.9.9", "v2.0.0", "v1.10.0"},
+			want:     "v2.0.0",
+			wantErr:  false,
+		},
+		{
+			name:     "timestamp format YYYYMMDDHHMMSS",
+			versions: []string{"20240101120000", "20240115093000", "20240102120000"},
+			want:     "20240115093000",
+			wantErr:  false,
+		},
+		{
+			name:     "timestamp format with different days",
+			versions: []string{"20240101000000", "20240131235959", "20240115120000"},
+			want:     "20240131235959",
+			wantErr:  false,
+		},
+		{
+			name:     "empty list",
+			versions: []string{},
+			wantErr:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := findMaxVersion(tt.versions)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("findMaxVersion() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr && got != tt.want {
+				t.Errorf("findMaxVersion() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCompareVersions(t *testing.T) {
+	tests := []struct {
+		name string
+		v1   string
+		v2   string
+		want int
+	}{
+		{
+			name: "v1 < v2",
+			v1:   "v1",
+			v2:   "v2",
+			want: -1,
+		},
+		{
+			name: "v2 > v1",
+			v1:   "v2",
+			v2:   "v1",
+			want: 1,
+		},
+		{
+			name: "v1 == v1",
+			v1:   "v1",
+			v2:   "v1",
+			want: 0,
+		},
+		{
+			name: "v9 < v10",
+			v1:   "v9",
+			v2:   "v10",
+			want: -1,
+		},
+		{
+			name: "v10 > v9",
+			v1:   "v10",
+			v2:   "v9",
+			want: 1,
+		},
+		{
+			name: "1.0.0 < 2.0.0",
+			v1:   "1.0.0",
+			v2:   "2.0.0",
+			want: -1,
+		},
+		{
+			name: "1.9.0 < 1.10.0",
+			v1:   "1.9.0",
+			v2:   "1.10.0",
+			want: -1,
+		},
+		{
+			name: "1.0.9 < 1.0.10",
+			v1:   "1.0.9",
+			v2:   "1.0.10",
+			want: -1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := compareVersions(tt.v1, tt.v2)
+			if got != tt.want {
+				t.Errorf("compareVersions(%q, %q) = %v, want %v", tt.v1, tt.v2, got, tt.want)
 			}
 		})
 	}

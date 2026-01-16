@@ -48,6 +48,7 @@ All options can be set via **environment variables** or **CLI flags**. CLI flags
 | Flag | Environment Variable | Description | Required |
 |------|---------------------|-------------|----------|
 | `--s3-bucket` | `S3_BUCKET` | S3 bucket name containing schema files | Yes |
+| `--s3-endpoint` | `S3_ENDPOINT` | Custom S3 endpoint URL for S3-compatible storage | No |
 | `--path-prefix` | `PATH_PREFIX` | S3 path prefix (e.g., "schemas/") | Yes |
 | `--schema-file` | `SCHEMA_FILE` | Schema file name (default: "schema.sql") | No |
 
@@ -153,6 +154,20 @@ db-schema-sync \
   --db-host localhost \
   --db-port 5432 \
   --db-user user \
+  --db-name mydb
+```
+
+#### Using S3-compatible storage (e.g., Sakura Cloud, MinIO):
+
+```bash
+db-schema-sync \
+  --s3-endpoint https://s3.isk01.sakurastorage.jp \
+  --s3-bucket my-bucket \
+  --path-prefix schemas/ \
+  --db-host localhost \
+  --db-port 5432 \
+  --db-user user \
+  --db-password pass \
   --db-name mydb
 ```
 

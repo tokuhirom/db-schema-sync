@@ -31,6 +31,7 @@ type S3Client interface {
 type CLI struct {
 	// S3 settings
 	S3Bucket   string `help:"S3 bucket name" env:"S3_BUCKET" required:""`
+	S3Endpoint string `help:"Custom S3 endpoint URL for S3-compatible storage (e.g., 'https://s3.isk01.sakurastorage.jp')" env:"S3_ENDPOINT"`
 	PathPrefix string `help:"S3 path prefix (e.g., 'schemas/')" env:"PATH_PREFIX" required:""`
 	SchemaFile string `help:"Schema file name" env:"SCHEMA_FILE" default:"schema.sql"`
 
@@ -99,7 +100,17 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to load AWS config: %w", err)
 	}
-	client := s3.NewFromConfig(cfg)
+
+	var client *s3.Client
+	if cli.S3Endpoint != "" {
+		// Use custom endpoint for S3-compatible storage
+		client = s3.NewFromConfig(cfg, func(o *s3.Options) {
+			o.BaseEndpoint = aws.String(cli.S3Endpoint)
+		})
+		slog.Info("Using custom S3 endpoint", "endpoint", cli.S3Endpoint)
+	} else {
+		client = s3.NewFromConfig(cfg)
+	}
 
 	return runWithClient(ctx, client, cli.S3Bucket)
 }

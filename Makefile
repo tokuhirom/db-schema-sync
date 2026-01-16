@@ -3,7 +3,6 @@
 # Variables
 BINARY_NAME=db-schema-sync
 MAIN_FILE=./cmd/db-schema-sync
-DOCKER_IMAGE=db-schema-sync
 
 # Default target
 all: build
@@ -32,14 +31,6 @@ run:
 deps:
 	go mod tidy
 
-# Build Docker image
-docker-build:
-	docker build -t $(DOCKER_IMAGE) .
-
-# Run Docker container (requires environment variables to be set)
-docker-run:
-	docker run --rm -it $(DOCKER_IMAGE)
-
 # Clean build artifacts
 clean:
 	rm -f $(BINARY_NAME)
@@ -54,9 +45,7 @@ help:
 	@echo "  lint             - Run linter"
 	@echo "  run              - Run the application locally"
 	@echo "  deps             - Install/update dependencies"
-	@echo "  docker-build     - Build Docker image"
-	@echo "  docker-run       - Run Docker container"
 	@echo "  clean            - Clean build artifacts"
 	@echo "  help             - Show this help message"
 
-.PHONY: all build test test-integration lint run deps docker-build docker-run clean help
+.PHONY: all build test test-integration lint run deps clean help

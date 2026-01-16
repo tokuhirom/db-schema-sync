@@ -1,7 +1,7 @@
 version: 2
 
 builds:
-  - main: ./cmd/main.go
+  - main: ./cmd/db-schema-sync
     binary: db-schema-sync
     env:
       - CGO_ENABLED=0

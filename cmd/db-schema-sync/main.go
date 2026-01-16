@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/hashicorp/go-version"
 )
 
 // S3Client defines the interface for S3 operations
@@ -121,7 +122,7 @@ func runWithClient(ctx context.Context, client S3Client, bucket string) error {
 	// Reset failure count on success
 	consecutiveFailureCount = 0
 
-	if lastAppliedVersion != "" && latestVersion <= lastAppliedVersion {
+	if lastAppliedVersion != "" && compareVersions(latestVersion, lastAppliedVersion) <= 0 {
 		slog.Info("Latest version is not newer than last applied version, skipping", "latest", latestVersion, "last_applied", lastAppliedVersion)
 		return nil
 	}
@@ -202,31 +203,91 @@ func findLatestSchema(ctx context.Context, client S3Client, bucket, prefix, sche
 
 // findLatestVersion extracts versions from S3 keys and returns the latest one
 func findLatestVersion(keys []string, prefix, schemaFileName string) (string, string, error) {
-	var versions []string
+	var versionStrings []string
 	for _, key := range keys {
 		// Check if the object key ends with the schema file name
 		if path.Base(key) == schemaFileName {
 			// Extract the version part (directory name)
 			dir := path.Dir(key)
-			version := path.Base(dir)
+			ver := path.Base(dir)
 			// Only consider non-empty versions
-			if version != "." && version != "/" {
-				versions = append(versions, version)
+			if ver != "." && ver != "/" {
+				versionStrings = append(versionStrings, ver)
 			}
 		}
 	}
 
-	if len(versions) == 0 {
+	if len(versionStrings) == 0 {
 		return "", "", fmt.Errorf("no schema files found with prefix %s and file name %s", prefix, schemaFileName)
 	}
 
-	// Sort versions alphabetically and pick the latest
-	sort.Strings(versions)
-	latestVersion := versions[len(versions)-1]
+	// Sort versions using semantic versioning
+	latestVersion, err := findMaxVersion(versionStrings)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to parse versions: %w", err)
+	}
 
 	// Construct the full key for the latest schema
 	latestSchemaKey := path.Join(prefix, latestVersion, schemaFileName)
 	return latestSchemaKey, latestVersion, nil
+}
+
+// findMaxVersion finds the maximum version from a list of version strings
+func findMaxVersion(versionStrings []string) (string, error) {
+	if len(versionStrings) == 0 {
+		return "", fmt.Errorf("no versions provided")
+	}
+
+	type versionPair struct {
+		original string
+		parsed   *version.Version
+	}
+
+	var versions []versionPair
+	for _, vs := range versionStrings {
+		v, err := version.NewVersion(vs)
+		if err != nil {
+			// If parsing fails, log warning and skip
+			slog.Warn("Failed to parse version, skipping", "version", vs, "error", err)
+			continue
+		}
+		versions = append(versions, versionPair{original: vs, parsed: v})
+	}
+
+	if len(versions) == 0 {
+		return "", fmt.Errorf("no valid versions found")
+	}
+
+	// Sort by parsed version
+	sort.Slice(versions, func(i, j int) bool {
+		return versions[i].parsed.LessThan(versions[j].parsed)
+	})
+
+	return versions[len(versions)-1].original, nil
+}
+
+// compareVersions compares two version strings and returns:
+// -1 if v1 < v2, 0 if v1 == v2, 1 if v1 > v2
+func compareVersions(v1, v2 string) int {
+	ver1, err1 := version.NewVersion(v1)
+	ver2, err2 := version.NewVersion(v2)
+
+	// If either version fails to parse, fall back to string comparison
+	if err1 != nil || err2 != nil {
+		if v1 < v2 {
+			return -1
+		} else if v1 > v2 {
+			return 1
+		}
+		return 0
+	}
+
+	if ver1.LessThan(ver2) {
+		return -1
+	} else if ver1.GreaterThan(ver2) {
+		return 1
+	}
+	return 0
 }
 
 func downloadSchemaFromS3(ctx context.Context, client S3Client, bucket, key string) ([]byte, error) {

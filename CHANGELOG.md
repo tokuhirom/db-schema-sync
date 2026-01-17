@@ -1,5 +1,8 @@
 # Changelog
 
+## [v0.0.4](https://github.com/tokuhirom/db-schema-sync/compare/v0.0.3...v0.0.4) - 2026-01-16
+- chore: move Docker build to goreleaser by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/9
+
 ## [v0.0.3](https://github.com/tokuhirom/db-schema-sync/compare/v0.0.2...v0.0.3) - 2026-01-16
 - feat: use semver for version comparison by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/5
 - feat: add custom S3 endpoint support for S3-compatible storage by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/7

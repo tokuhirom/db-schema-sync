@@ -27,14 +27,25 @@ type S3Client interface {
 	PutObject(ctx context.Context, params *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error)
 }
 
-// CLI defines command line options
+// CLI defines the command line interface with subcommands
 type CLI struct {
-	// S3 settings
+	// Global S3 settings
 	S3Bucket   string `help:"S3 bucket name" env:"S3_BUCKET" required:""`
-	S3Endpoint string `help:"Custom S3 endpoint URL for S3-compatible storage (e.g., 'https://s3.isk01.sakurastorage.jp')" env:"S3_ENDPOINT"`
+	S3Endpoint string `help:"Custom S3 endpoint URL for S3-compatible storage" env:"S3_ENDPOINT"`
 	PathPrefix string `help:"S3 path prefix (e.g., 'schemas/')" env:"PATH_PREFIX" required:""`
 	SchemaFile string `help:"Schema file name" env:"SCHEMA_FILE" default:"schema.sql"`
 
+	// Completion marker
+	CompletedFile string `help:"Completion marker file name" env:"COMPLETED_FILE" default:"completed"`
+
+	// Subcommands
+	Watch WatchCmd `cmd:"" help:"Run in daemon mode, continuously polling for schema updates"`
+	Apply ApplyCmd `cmd:"" help:"Apply schema once and exit"`
+	Diff  DiffCmd  `cmd:"" help:"Show diff between S3 schema and local file"`
+}
+
+// WatchCmd runs the sync in daemon mode with polling
+type WatchCmd struct {
 	// Database settings
 	DBHost     string `help:"Database host" env:"DB_HOST" required:""`
 	DBPort     string `help:"Database port" env:"DB_PORT" required:""`
@@ -43,8 +54,7 @@ type CLI struct {
 	DBName     string `help:"Database name" env:"DB_NAME" required:""`
 
 	// Polling settings
-	Interval      time.Duration `help:"Polling interval" env:"INTERVAL" default:"1m"`
-	CompletedFile string        `help:"Completion marker file name" env:"COMPLETED_FILE" default:"completed"`
+	Interval time.Duration `help:"Polling interval" env:"INTERVAL" default:"1m"`
 
 	// Lifecycle hooks
 	OnStart          string `help:"Command to run when the process starts" env:"ON_START"`
@@ -53,18 +63,40 @@ type CLI struct {
 	OnApplySucceeded string `help:"Command to run after schema is successfully applied" env:"ON_APPLY_SUCCEEDED"`
 }
 
+// ApplyCmd applies the schema once and exits
+type ApplyCmd struct {
+	// Database settings
+	DBHost     string `help:"Database host" env:"DB_HOST" required:""`
+	DBPort     string `help:"Database port" env:"DB_PORT" required:""`
+	DBUser     string `help:"Database user" env:"DB_USER" required:""`
+	DBPassword string `help:"Database password" env:"DB_PASSWORD" required:""`
+	DBName     string `help:"Database name" env:"DB_NAME" required:""`
+
+	// Lifecycle hooks
+	OnApplyFailed    string `help:"Command to run when schema application fails" env:"ON_APPLY_FAILED"`
+	OnApplySucceeded string `help:"Command to run after schema is successfully applied" env:"ON_APPLY_SUCCEEDED"`
+}
+
+// DiffCmd shows the diff between S3 schema and a local file
+type DiffCmd struct {
+	LocalFile string `arg:"" help:"Local schema file to compare against S3"`
+}
+
 var (
 	cli CLI
 
-	// In-memory state
+	// In-memory state (for watch mode)
 	lastAppliedVersion      string
 	consecutiveFailureCount int
 )
 
+const maxConsecutiveFailures = 3
+
 func main() {
-	kong.Parse(&cli,
+	ctx := kong.Parse(&cli,
 		kong.Name("db-schema-sync"),
 		kong.Description("Synchronize database schemas from S3 using psqldef"),
+		kong.UsageOnError(),
 	)
 
 	// Ensure pathPrefix ends with a slash
@@ -72,60 +104,101 @@ func main() {
 		cli.PathPrefix += "/"
 	}
 
+	err := ctx.Run(&cli)
+	ctx.FatalIfErrorf(err)
+}
+
+// Run executes the watch command
+func (cmd *WatchCmd) Run(cli *CLI) error {
 	// Run on-start command if specified
-	if cli.OnStart != "" {
-		if err := runCommand(cli.OnStart); err != nil {
+	if cmd.OnStart != "" {
+		if err := runCommand(cmd.OnStart); err != nil {
 			slog.Warn("on-start command failed", "error", err)
 		}
 	}
 
 	ctx := context.Background()
+	client, err := createS3Client(ctx, cli.S3Endpoint)
+	if err != nil {
+		return err
+	}
 
 	// Start polling loop
 	for {
-		if err := run(ctx); err != nil {
-			slog.Error("Error in run", "error", err)
+		if err := runSync(ctx, client, cli, cmd.DBHost, cmd.DBPort, cmd.DBUser, cmd.DBPassword, cmd.DBName, cmd.OnS3FetchError, cmd.OnApplyFailed, cmd.OnApplySucceeded); err != nil {
+			slog.Error("Error in sync", "error", err)
 		}
 
-		slog.Info("Waiting before next poll", "interval", cli.Interval)
-		time.Sleep(cli.Interval)
+		slog.Info("Waiting before next poll", "interval", cmd.Interval)
+		time.Sleep(cmd.Interval)
 	}
 }
 
-const maxConsecutiveFailures = 3
+// Run executes the apply command (single-shot)
+func (cmd *ApplyCmd) Run(cli *CLI) error {
+	ctx := context.Background()
+	client, err := createS3Client(ctx, cli.S3Endpoint)
+	if err != nil {
+		return err
+	}
 
-func run(ctx context.Context) error {
-	// Initialize S3 client
+	return runSync(ctx, client, cli, cmd.DBHost, cmd.DBPort, cmd.DBUser, cmd.DBPassword, cmd.DBName, "", cmd.OnApplyFailed, cmd.OnApplySucceeded)
+}
+
+// Run executes the diff command
+func (cmd *DiffCmd) Run(cli *CLI) error {
+	ctx := context.Background()
+	client, err := createS3Client(ctx, cli.S3Endpoint)
+	if err != nil {
+		return err
+	}
+
+	// Find the latest completed schema
+	latestSchemaKey, latestVersion, err := findLatestCompletedSchema(ctx, client, cli.S3Bucket, cli.PathPrefix, cli.SchemaFile, cli.CompletedFile)
+	if err != nil {
+		return fmt.Errorf("failed to find latest completed schema: %w", err)
+	}
+
+	slog.Info("Found latest completed schema", "version", latestVersion, "key", latestSchemaKey)
+
+	// Download schema from S3
+	s3Schema, err := downloadSchemaFromS3(ctx, client, cli.S3Bucket, latestSchemaKey)
+	if err != nil {
+		return fmt.Errorf("failed to download schema from S3: %w", err)
+	}
+
+	// Show diff
+	return showDiff(s3Schema, latestSchemaKey, cmd.LocalFile)
+}
+
+func createS3Client(ctx context.Context, endpoint string) (*s3.Client, error) {
 	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to load AWS config: %w", err)
+		return nil, fmt.Errorf("failed to load AWS config: %w", err)
 	}
 
-	var client *s3.Client
-	if cli.S3Endpoint != "" {
-		// Use custom endpoint for S3-compatible storage
-		client = s3.NewFromConfig(cfg, func(o *s3.Options) {
-			o.BaseEndpoint = aws.String(cli.S3Endpoint)
+	if endpoint != "" {
+		client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+			o.BaseEndpoint = aws.String(endpoint)
 		})
-		slog.Info("Using custom S3 endpoint", "endpoint", cli.S3Endpoint)
-	} else {
-		client = s3.NewFromConfig(cfg)
+		slog.Info("Using custom S3 endpoint", "endpoint", endpoint)
+		return client, nil
 	}
 
-	return runWithClient(ctx, client, cli.S3Bucket)
+	return s3.NewFromConfig(cfg), nil
 }
 
-func runWithClient(ctx context.Context, client S3Client, bucket string) error {
+func runSync(ctx context.Context, client S3Client, cli *CLI, dbHost, dbPort, dbUser, dbPassword, dbName, onS3FetchError, onApplyFailed, onApplySucceeded string) error {
 	slog.Info("Finding latest schema...")
 
 	// Find the latest schema file
-	latestSchemaKey, latestVersion, err := findLatestSchema(ctx, client, bucket, cli.PathPrefix, cli.SchemaFile)
+	latestSchemaKey, latestVersion, err := findLatestSchema(ctx, client, cli.S3Bucket, cli.PathPrefix, cli.SchemaFile)
 	if err != nil {
 		consecutiveFailureCount++
 		slog.Error("Failed to find latest schema", "error", err, "consecutive_failures", consecutiveFailureCount)
 
 		if consecutiveFailureCount >= maxConsecutiveFailures {
-			runHook("on-s3-fetch-error", cli.OnS3FetchError)
+			runHook("on-s3-fetch-error", onS3FetchError)
 		}
 		return fmt.Errorf("failed to find latest schema: %w", err)
 	}
@@ -140,7 +213,7 @@ func runWithClient(ctx context.Context, client S3Client, bucket string) error {
 
 	// Check if completion marker already exists in S3
 	if cli.CompletedFile != "" {
-		exists, err := checkCompletionMarker(ctx, client, bucket, latestSchemaKey, cli.CompletedFile)
+		exists, err := checkCompletionMarker(ctx, client, cli.S3Bucket, latestSchemaKey, cli.CompletedFile)
 		if err != nil {
 			slog.Warn("Could not check completion marker", "error", err)
 		} else if exists {
@@ -151,18 +224,18 @@ func runWithClient(ctx context.Context, client S3Client, bucket string) error {
 	}
 
 	// Download schema from S3
-	schema, err := downloadSchemaFromS3(ctx, client, bucket, latestSchemaKey)
+	schema, err := downloadSchemaFromS3(ctx, client, cli.S3Bucket, latestSchemaKey)
 	if err != nil {
 		consecutiveFailureCount++
 		if consecutiveFailureCount >= maxConsecutiveFailures {
-			runHook("on-s3-fetch-error", cli.OnS3FetchError)
+			runHook("on-s3-fetch-error", onS3FetchError)
 		}
 		return fmt.Errorf("failed to download schema: %w", err)
 	}
 
 	// Apply schema using psqldef
-	if err := applySchema(schema); err != nil {
-		runHook("on-apply-failed", cli.OnApplyFailed)
+	if err := applySchema(schema, dbHost, dbPort, dbUser, dbPassword, dbName); err != nil {
+		runHook("on-apply-failed", onApplyFailed)
 		return fmt.Errorf("failed to apply schema: %w", err)
 	}
 
@@ -171,13 +244,13 @@ func runWithClient(ctx context.Context, client S3Client, bucket string) error {
 
 	// Create completion marker in S3
 	if cli.CompletedFile != "" {
-		if err := createCompletionMarker(ctx, client, bucket, latestSchemaKey, cli.CompletedFile); err != nil {
+		if err := createCompletionMarker(ctx, client, cli.S3Bucket, latestSchemaKey, cli.CompletedFile); err != nil {
 			slog.Warn("Could not create completion marker", "error", err)
 		}
 	}
 
 	// Run on-apply-succeeded hook
-	runHook("on-apply-succeeded", cli.OnApplySucceeded)
+	runHook("on-apply-succeeded", onApplySucceeded)
 
 	slog.Info("Successfully applied schema", "version", latestVersion)
 	return nil
@@ -210,6 +283,54 @@ func findLatestSchema(ctx context.Context, client S3Client, bucket, prefix, sche
 	}
 
 	return findLatestVersion(keys, prefix, schemaFileName)
+}
+
+// findLatestCompletedSchema finds the latest schema that has a completion marker
+func findLatestCompletedSchema(ctx context.Context, client S3Client, bucket, prefix, schemaFileName, completedFileName string) (string, string, error) {
+	// List objects with the specified prefix
+	resp, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+		Bucket: aws.String(bucket),
+		Prefix: aws.String(prefix),
+	})
+	if err != nil {
+		return "", "", err
+	}
+
+	// Build a set of keys for quick lookup
+	keySet := make(map[string]bool)
+	for _, obj := range resp.Contents {
+		keySet[*obj.Key] = true
+	}
+
+	// Extract versions that have both schema file and completion marker
+	var versionStrings []string
+	for _, obj := range resp.Contents {
+		key := *obj.Key
+		if path.Base(key) == schemaFileName {
+			// Check if completion marker exists
+			markerKey := buildCompletionMarkerKey(key, completedFileName)
+			if keySet[markerKey] {
+				dir := path.Dir(key)
+				ver := path.Base(dir)
+				if ver != "." && ver != "/" {
+					versionStrings = append(versionStrings, ver)
+				}
+			}
+		}
+	}
+
+	if len(versionStrings) == 0 {
+		return "", "", fmt.Errorf("no completed schema files found with prefix %s", prefix)
+	}
+
+	// Find the latest version
+	latestVersion, err := findMaxVersion(versionStrings)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to parse versions: %w", err)
+	}
+
+	latestSchemaKey := path.Join(prefix, latestVersion, schemaFileName)
+	return latestSchemaKey, latestVersion, nil
 }
 
 // findLatestVersion extracts versions from S3 keys and returns the latest one
@@ -314,7 +435,7 @@ func downloadSchemaFromS3(ctx context.Context, client S3Client, bucket, key stri
 	return io.ReadAll(result.Body)
 }
 
-func applySchema(schema []byte) error {
+func applySchema(schema []byte, dbHost, dbPort, dbUser, dbPassword, dbName string) error {
 	// Save schema to temporary file
 	tmpFile, err := os.CreateTemp("", "schema-*.sql")
 	if err != nil {
@@ -328,7 +449,7 @@ func applySchema(schema []byte) error {
 	}
 
 	// Run psqldef to apply schema
-	cmd := exec.Command("psqldef", "-U", cli.DBUser, "-h", cli.DBHost, "-p", cli.DBPort, "--password", cli.DBPassword, cli.DBName, "--file", tmpFile.Name())
+	cmd := exec.Command("psqldef", "-U", dbUser, "-h", dbHost, "-p", dbPort, "--password", dbPassword, dbName, "--file", tmpFile.Name())
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -372,6 +493,39 @@ func createCompletionMarker(ctx context.Context, client S3Client, bucket, schema
 	})
 
 	return err
+}
+
+func showDiff(s3Schema []byte, s3Path, localPath string) error {
+	// Create temporary files for diff
+	s3File, err := os.CreateTemp("", "s3-schema-*.sql")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(s3File.Name()) }()
+
+	if _, err := s3File.Write(s3Schema); err != nil {
+		return err
+	}
+	if err := s3File.Close(); err != nil {
+		return err
+	}
+
+	// Run diff command
+	cmd := exec.Command("diff", "-u", "--label", s3Path, "--label", localPath, s3File.Name(), localPath)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	err = cmd.Run()
+	if err != nil {
+		// diff returns exit code 1 if files differ, which is not an error for us
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			return nil
+		}
+		return err
+	}
+
+	fmt.Println("No differences found.")
+	return nil
 }
 
 func runCommand(command string) error {

@@ -29,7 +29,7 @@ func NewAdvisoryLocker(dbHost, dbPort, dbUser, dbPassword, dbName string) (*Advi
 
 	// Verify connection
 	if err := db.Ping(); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 

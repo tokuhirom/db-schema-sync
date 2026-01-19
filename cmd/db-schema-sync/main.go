@@ -349,7 +349,7 @@ func runSync(ctx context.Context, client S3Client, cli *CLI, dbHost, dbPort, dbU
 		if err != nil {
 			return fmt.Errorf("failed to create locker: %w", err)
 		}
-		defer locker.Close()
+		defer func() { _ = locker.Close() }()
 
 		acquired, err := locker.TryLock(ctx)
 		if err != nil {

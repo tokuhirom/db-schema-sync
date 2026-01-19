@@ -100,7 +100,15 @@ const maxConsecutiveFailures = 3
 func main() {
 	ctx := kong.Parse(&cli,
 		kong.Name("db-schema-sync"),
-		kong.Description("Synchronize database schemas from S3 using psqldef"),
+		kong.Description(`Synchronize database schemas from S3 using psqldef
+
+AWS credentials can be configured via environment variables:
+  AWS_ACCESS_KEY_ID       AWS access key ID
+  AWS_SECRET_ACCESS_KEY   AWS secret access key
+  AWS_SESSION_TOKEN       AWS session token (for temporary credentials)
+  AWS_DEFAULT_REGION      AWS region (optional)
+
+Or use IAM roles when running on EC2, ECS, or EKS.`),
 		kong.UsageOnError(),
 	)
 

@@ -56,6 +56,9 @@ type WatchCmd struct {
 	// Polling settings
 	Interval time.Duration `help:"Polling interval" env:"INTERVAL" default:"1m"`
 
+	// Metrics settings
+	MetricsAddr string `help:"Metrics endpoint address (e.g., ':9090'). Metrics disabled if not set" env:"METRICS_ADDR"`
+
 	// Lifecycle hooks
 	OnStart          string `help:"Command to run when the process starts" env:"ON_START"`
 	OnS3FetchError   string `help:"Command to run when S3 fetch fails 3 times consecutively" env:"ON_S3_FETCH_ERROR"`
@@ -112,6 +115,11 @@ func main() {
 
 // Run executes the watch command
 func (cmd *WatchCmd) Run(cli *CLI) error {
+	// Start metrics server if address is specified
+	if cmd.MetricsAddr != "" {
+		go startMetricsServer(cmd.MetricsAddr)
+	}
+
 	// Run on-start command if specified
 	if cmd.OnStart != "" {
 		if err := runCommand(cmd.OnStart); err != nil {
@@ -193,10 +201,15 @@ func createS3Client(ctx context.Context, endpoint string) (*s3.Client, error) {
 func runSync(ctx context.Context, client S3Client, cli *CLI, dbHost, dbPort, dbUser, dbPassword, dbName, onS3FetchError, onBeforeApply, onApplyFailed, onApplySucceeded string) error {
 	slog.Info("Finding latest schema...")
 
+	// Record S3 fetch attempt
+	recordS3FetchAttempt()
+
 	// Find the latest schema file
 	latestSchemaKey, latestVersion, err := findLatestSchema(ctx, client, cli.S3Bucket, cli.PathPrefix, cli.SchemaFile)
 	if err != nil {
 		consecutiveFailureCount++
+		recordS3FetchError()
+		recordConsecutiveFailures(consecutiveFailureCount)
 		slog.Error("Failed to find latest schema", "error", err, "consecutive_failures", consecutiveFailureCount)
 
 		if consecutiveFailureCount >= maxConsecutiveFailures {
@@ -207,6 +220,7 @@ func runSync(ctx context.Context, client S3Client, cli *CLI, dbHost, dbPort, dbU
 
 	// Reset failure count on success
 	consecutiveFailureCount = 0
+	recordConsecutiveFailures(consecutiveFailureCount)
 
 	if lastAppliedVersion != "" && compareVersions(latestVersion, lastAppliedVersion) <= 0 {
 		slog.Info("Latest version is not newer than last applied version, skipping", "latest", latestVersion, "last_applied", lastAppliedVersion)
@@ -229,6 +243,8 @@ func runSync(ctx context.Context, client S3Client, cli *CLI, dbHost, dbPort, dbU
 	schema, err := downloadSchemaFromS3(ctx, client, cli.S3Bucket, latestSchemaKey)
 	if err != nil {
 		consecutiveFailureCount++
+		recordS3FetchError()
+		recordConsecutiveFailures(consecutiveFailureCount)
 		if consecutiveFailureCount >= maxConsecutiveFailures {
 			runHook("on-s3-fetch-error", onS3FetchError)
 		}
@@ -238,11 +254,18 @@ func runSync(ctx context.Context, client S3Client, cli *CLI, dbHost, dbPort, dbU
 	// Run on-before-apply hook
 	runHook("on-before-apply", onBeforeApply)
 
+	// Record apply attempt
+	recordApplyAttempt()
+
 	// Apply schema using psqldef
 	if err := applySchema(schema, dbHost, dbPort, dbUser, dbPassword, dbName); err != nil {
+		recordApplyError()
 		runHook("on-apply-failed", onApplyFailed)
 		return fmt.Errorf("failed to apply schema: %w", err)
 	}
+
+	// Record successful apply
+	recordApplySuccess(latestVersion)
 
 	// Record the applied version
 	lastAppliedVersion = latestVersion

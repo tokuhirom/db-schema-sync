@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.0.11](https://github.com/tokuhirom/db-schema-sync/compare/v0.0.10...v0.0.11) - 2026-01-19
+- docs: add CLAUDE.md for Claude Code guidance by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/29
+- feat: capture psqldef output and pass to on-apply-failed hook by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/31
+
 ## [v0.0.10](https://github.com/tokuhirom/db-schema-sync/compare/v0.0.9...v0.0.10) - 2026-01-19
 - test: add comprehensive unit tests for S3 operations and hooks by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/26
 

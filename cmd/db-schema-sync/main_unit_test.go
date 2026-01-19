@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -329,5 +330,119 @@ func TestBuildCompletionMarkerKey(t *testing.T) {
 				t.Errorf("buildCompletionMarkerKey() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestHookEnvToEnvVars(t *testing.T) {
+	tests := []struct {
+		name     string
+		hookEnv  HookEnv
+		expected map[string]string
+	}{
+		{
+			name: "all fields populated",
+			hookEnv: HookEnv{
+				S3Bucket:      "my-bucket",
+				PathPrefix:    "schemas/",
+				SchemaFile:    "schema.sql",
+				Version:       "v1.2.3",
+				Error:         "connection refused",
+				CompletedFile: "completed",
+				AppVersion:    "v0.0.8",
+			},
+			expected: map[string]string{
+				"DB_SCHEMA_SYNC_S3_BUCKET":      "my-bucket",
+				"DB_SCHEMA_SYNC_PATH_PREFIX":    "schemas/",
+				"DB_SCHEMA_SYNC_SCHEMA_FILE":    "schema.sql",
+				"DB_SCHEMA_SYNC_VERSION":        "v1.2.3",
+				"DB_SCHEMA_SYNC_ERROR":          "connection refused",
+				"DB_SCHEMA_SYNC_COMPLETED_FILE": "completed",
+				"DB_SCHEMA_SYNC_APP_VERSION":    "v0.0.8",
+			},
+		},
+		{
+			name: "only S3 fields",
+			hookEnv: HookEnv{
+				S3Bucket:   "test-bucket",
+				PathPrefix: "test/",
+				SchemaFile: "test.sql",
+			},
+			expected: map[string]string{
+				"DB_SCHEMA_SYNC_S3_BUCKET":   "test-bucket",
+				"DB_SCHEMA_SYNC_PATH_PREFIX": "test/",
+				"DB_SCHEMA_SYNC_SCHEMA_FILE": "test.sql",
+			},
+		},
+		{
+			name: "with error message containing special characters",
+			hookEnv: HookEnv{
+				S3Bucket: "bucket",
+				Error:    "error: \"connection\" failed with code=123",
+			},
+			expected: map[string]string{
+				"DB_SCHEMA_SYNC_S3_BUCKET": "bucket",
+				"DB_SCHEMA_SYNC_ERROR":     "error: \"connection\" failed with code=123",
+			},
+		},
+		{
+			name:     "empty hook env",
+			hookEnv:  HookEnv{},
+			expected: map[string]string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			envVars := tt.hookEnv.toEnvVars()
+
+			// Create a map for easy lookup
+			envMap := make(map[string]string)
+			for _, env := range envVars {
+				parts := strings.SplitN(env, "=", 2)
+				if len(parts) == 2 {
+					envMap[parts[0]] = parts[1]
+				}
+			}
+
+			// Check expected variables are present
+			for key, expectedValue := range tt.expected {
+				if gotValue, ok := envMap[key]; !ok {
+					t.Errorf("expected env var %s not found", key)
+				} else if gotValue != expectedValue {
+					t.Errorf("env var %s = %q, want %q", key, gotValue, expectedValue)
+				}
+			}
+
+			// Check unexpected DB_SCHEMA_SYNC_ variables are not present
+			for key := range envMap {
+				if strings.HasPrefix(key, "DB_SCHEMA_SYNC_") {
+					if _, ok := tt.expected[key]; !ok {
+						t.Errorf("unexpected env var %s found", key)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestHookEnvPreservesExistingEnv(t *testing.T) {
+	hookEnv := &HookEnv{
+		S3Bucket: "test-bucket",
+		Version:  "v1.0.0",
+	}
+
+	envVars := hookEnv.toEnvVars()
+
+	// Check that existing environment variables are preserved (like PATH, HOME, etc.)
+	hasPath := false
+	for _, env := range envVars {
+		if strings.HasPrefix(env, "PATH=") {
+			hasPath = true
+			break
+		}
+	}
+
+	if !hasPath {
+		t.Error("expected PATH environment variable to be preserved")
 	}
 }

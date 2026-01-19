@@ -66,6 +66,9 @@ type WatchCmd struct {
 	// Export after apply settings
 	ExportAfterApply bool `help:"Export schema after successful apply and upload to S3 as exported.sql" env:"EXPORT_AFTER_APPLY"`
 
+	// Lock settings
+	SkipLock bool `help:"Skip advisory lock (not recommended for production)" env:"SKIP_LOCK"`
+
 	// Lifecycle hooks
 	OnStart          string `help:"Command to run when the process starts" env:"ON_START"`
 	OnS3FetchError   string `help:"Command to run when S3 fetch fails 3 times consecutively" env:"ON_S3_FETCH_ERROR"`
@@ -85,6 +88,9 @@ type ApplyCmd struct {
 
 	// Export after apply settings
 	ExportAfterApply bool `help:"Export schema after successful apply and upload to S3 as exported.sql" env:"EXPORT_AFTER_APPLY"`
+
+	// Lock settings
+	SkipLock bool `help:"Skip advisory lock (not recommended for production)" env:"SKIP_LOCK"`
 
 	// Lifecycle hooks
 	OnBeforeApply    string `help:"Command to run before schema application starts" env:"ON_BEFORE_APPLY"`
@@ -158,7 +164,7 @@ func (cmd *WatchCmd) Run(cli *CLI) error {
 
 	// Start polling loop
 	for {
-		if err := runSync(ctx, client, cli, cmd.DBHost, cmd.DBPort, cmd.DBUser, cmd.DBPassword, cmd.DBName, cmd.ExportAfterApply, cmd.OnS3FetchError, cmd.OnBeforeApply, cmd.OnApplyFailed, cmd.OnApplySucceeded); err != nil {
+		if err := runSync(ctx, client, cli, cmd.DBHost, cmd.DBPort, cmd.DBUser, cmd.DBPassword, cmd.DBName, cmd.ExportAfterApply, cmd.SkipLock, cmd.OnS3FetchError, cmd.OnBeforeApply, cmd.OnApplyFailed, cmd.OnApplySucceeded); err != nil {
 			slog.Error("Error in sync", "error", err)
 		}
 
@@ -175,7 +181,7 @@ func (cmd *ApplyCmd) Run(cli *CLI) error {
 		return err
 	}
 
-	return runSync(ctx, client, cli, cmd.DBHost, cmd.DBPort, cmd.DBUser, cmd.DBPassword, cmd.DBName, cmd.ExportAfterApply, "", cmd.OnBeforeApply, cmd.OnApplyFailed, cmd.OnApplySucceeded)
+	return runSync(ctx, client, cli, cmd.DBHost, cmd.DBPort, cmd.DBUser, cmd.DBPassword, cmd.DBName, cmd.ExportAfterApply, cmd.SkipLock, "", cmd.OnBeforeApply, cmd.OnApplyFailed, cmd.OnApplySucceeded)
 }
 
 // Run executes the plan command - shows what DDL would be applied (offline mode)
@@ -269,7 +275,7 @@ func createS3Client(ctx context.Context, endpoint string) (*s3.Client, error) {
 	return s3.NewFromConfig(cfg), nil
 }
 
-func runSync(ctx context.Context, client S3Client, cli *CLI, dbHost, dbPort, dbUser, dbPassword, dbName string, exportAfterApply bool, onS3FetchError, onBeforeApply, onApplyFailed, onApplySucceeded string) error {
+func runSync(ctx context.Context, client S3Client, cli *CLI, dbHost, dbPort, dbUser, dbPassword, dbName string, exportAfterApply bool, skipLock bool, onS3FetchError, onBeforeApply, onApplyFailed, onApplySucceeded string) error {
 	slog.Info("Finding latest schema...")
 
 	// Base hook environment with S3 settings
@@ -334,6 +340,30 @@ func runSync(ctx context.Context, client S3Client, cli *CLI, dbHost, dbPort, dbU
 			runHook("on-s3-fetch-error", onS3FetchError, &hookEnv)
 		}
 		return fmt.Errorf("failed to download schema: %w", err)
+	}
+
+	// Acquire advisory lock if not skipped
+	var locker *AdvisoryLocker
+	if !skipLock {
+		locker, err = NewAdvisoryLocker(dbHost, dbPort, dbUser, dbPassword, dbName)
+		if err != nil {
+			return fmt.Errorf("failed to create locker: %w", err)
+		}
+		defer locker.Close()
+
+		acquired, err := locker.TryLock(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to acquire lock: %w", err)
+		}
+		if !acquired {
+			slog.Info("Another process is applying schema, skipping", "version", latestVersion)
+			return nil
+		}
+		defer func() {
+			if unlockErr := locker.Unlock(ctx); unlockErr != nil {
+				slog.Warn("Failed to release lock", "error", unlockErr)
+			}
+		}()
 	}
 
 	// Run on-before-apply hook

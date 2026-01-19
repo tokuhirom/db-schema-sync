@@ -232,7 +232,7 @@ func TestMetricsWithRunSync(t *testing.T) {
 	}
 
 	// Run sync (should fail due to S3 error)
-	err := runSync(context.Background(), mockClient, cli, "localhost", "5432", "user", "pass", "db", false, "", "", "", "")
+	err := runSync(context.Background(), mockClient, cli, "localhost", "5432", "user", "pass", "db", false, true, "", "", "", "")
 	if err == nil {
 		t.Error("expected error from runSync, got nil")
 	}

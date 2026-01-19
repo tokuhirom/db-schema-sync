@@ -82,9 +82,15 @@ type ApplyCmd struct {
 	OnApplySucceeded string `help:"Command to run after schema is successfully applied" env:"ON_APPLY_SUCCEEDED"`
 }
 
-// DiffCmd shows the diff between S3 schema and a local file
+// DiffCmd shows the diff between S3 schema and a local file or database
 type DiffCmd struct {
-	LocalFile string `arg:"" help:"Local schema file to compare against S3"`
+	LocalFile  string `arg:"" optional:"" help:"Local schema file to compare against S3"`
+	CompareDB  bool   `name:"db" help:"Compare S3 schema against actual database using psqldef --dry-run"`
+	DBHost     string `help:"Database host" env:"DB_HOST"`
+	DBPort     string `help:"Database port" env:"DB_PORT"`
+	DBUser     string `help:"Database user" env:"DB_USER"`
+	DBPassword string `help:"Database password" env:"DB_PASSWORD"`
+	DBName     string `help:"Database name" env:"DB_NAME"`
 }
 
 var (
@@ -165,6 +171,21 @@ func (cmd *ApplyCmd) Run(cli *CLI) error {
 
 // Run executes the diff command
 func (cmd *DiffCmd) Run(cli *CLI) error {
+	// Validate: either LocalFile or --db must be specified
+	if cmd.LocalFile == "" && !cmd.CompareDB {
+		return fmt.Errorf("either a local file or --db flag must be specified")
+	}
+	if cmd.LocalFile != "" && cmd.CompareDB {
+		return fmt.Errorf("cannot specify both a local file and --db flag")
+	}
+
+	// Validate DB parameters when --db is specified
+	if cmd.CompareDB {
+		if cmd.DBHost == "" || cmd.DBPort == "" || cmd.DBUser == "" || cmd.DBPassword == "" || cmd.DBName == "" {
+			return fmt.Errorf("all database parameters (--db-host, --db-port, --db-user, --db-password, --db-name) are required when using --db flag")
+		}
+	}
+
 	ctx := context.Background()
 	client, err := createS3Client(ctx, cli.S3Endpoint)
 	if err != nil {
@@ -185,7 +206,10 @@ func (cmd *DiffCmd) Run(cli *CLI) error {
 		return fmt.Errorf("failed to download schema from S3: %w", err)
 	}
 
-	// Show diff
+	// Show diff based on mode
+	if cmd.CompareDB {
+		return showSchemaDiff(s3Schema, cmd.DBHost, cmd.DBPort, cmd.DBUser, cmd.DBPassword, cmd.DBName)
+	}
 	return showDiff(s3Schema, latestSchemaKey, cmd.LocalFile)
 }
 
@@ -562,6 +586,28 @@ func showDiff(s3Schema []byte, s3Path, localPath string) error {
 
 	fmt.Println("No differences found.")
 	return nil
+}
+
+// showSchemaDiff compares S3 schema against actual database using psqldef --dry-run
+func showSchemaDiff(s3Schema []byte, dbHost, dbPort, dbUser, dbPassword, dbName string) error {
+	// Save schema to temporary file
+	tmpFile, err := os.CreateTemp("", "schema-*.sql")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
+	defer func() { _ = tmpFile.Close() }()
+
+	if _, err := tmpFile.Write(s3Schema); err != nil {
+		return err
+	}
+
+	// Run psqldef with --dry-run to show what would be applied
+	cmd := exec.Command("psqldef", "-U", dbUser, "-h", dbHost, "-p", dbPort, "--password", dbPassword, dbName, "--dry-run", "--file", tmpFile.Name())
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	return cmd.Run()
 }
 
 func runCommand(command string) error {

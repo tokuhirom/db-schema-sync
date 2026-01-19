@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.0.6](https://github.com/tokuhirom/db-schema-sync/compare/v0.0.5...v0.0.6) - 2026-01-19
+- feat: add on-before-apply lifecycle hook by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/12
+- feat: add Prometheus metrics endpoint to watch command by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/14
+
 ## [v0.0.5](https://github.com/tokuhirom/db-schema-sync/compare/v0.0.4...v0.0.5) - 2026-01-17
 - feat: add subcommand structure (watch, apply, diff) by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/8
 

@@ -59,6 +59,7 @@ type WatchCmd struct {
 	// Lifecycle hooks
 	OnStart          string `help:"Command to run when the process starts" env:"ON_START"`
 	OnS3FetchError   string `help:"Command to run when S3 fetch fails 3 times consecutively" env:"ON_S3_FETCH_ERROR"`
+	OnBeforeApply    string `help:"Command to run before schema application starts" env:"ON_BEFORE_APPLY"`
 	OnApplyFailed    string `help:"Command to run when schema application fails" env:"ON_APPLY_FAILED"`
 	OnApplySucceeded string `help:"Command to run after schema is successfully applied" env:"ON_APPLY_SUCCEEDED"`
 }
@@ -73,6 +74,7 @@ type ApplyCmd struct {
 	DBName     string `help:"Database name" env:"DB_NAME" required:""`
 
 	// Lifecycle hooks
+	OnBeforeApply    string `help:"Command to run before schema application starts" env:"ON_BEFORE_APPLY"`
 	OnApplyFailed    string `help:"Command to run when schema application fails" env:"ON_APPLY_FAILED"`
 	OnApplySucceeded string `help:"Command to run after schema is successfully applied" env:"ON_APPLY_SUCCEEDED"`
 }
@@ -125,7 +127,7 @@ func (cmd *WatchCmd) Run(cli *CLI) error {
 
 	// Start polling loop
 	for {
-		if err := runSync(ctx, client, cli, cmd.DBHost, cmd.DBPort, cmd.DBUser, cmd.DBPassword, cmd.DBName, cmd.OnS3FetchError, cmd.OnApplyFailed, cmd.OnApplySucceeded); err != nil {
+		if err := runSync(ctx, client, cli, cmd.DBHost, cmd.DBPort, cmd.DBUser, cmd.DBPassword, cmd.DBName, cmd.OnS3FetchError, cmd.OnBeforeApply, cmd.OnApplyFailed, cmd.OnApplySucceeded); err != nil {
 			slog.Error("Error in sync", "error", err)
 		}
 
@@ -142,7 +144,7 @@ func (cmd *ApplyCmd) Run(cli *CLI) error {
 		return err
 	}
 
-	return runSync(ctx, client, cli, cmd.DBHost, cmd.DBPort, cmd.DBUser, cmd.DBPassword, cmd.DBName, "", cmd.OnApplyFailed, cmd.OnApplySucceeded)
+	return runSync(ctx, client, cli, cmd.DBHost, cmd.DBPort, cmd.DBUser, cmd.DBPassword, cmd.DBName, "", cmd.OnBeforeApply, cmd.OnApplyFailed, cmd.OnApplySucceeded)
 }
 
 // Run executes the diff command
@@ -188,7 +190,7 @@ func createS3Client(ctx context.Context, endpoint string) (*s3.Client, error) {
 	return s3.NewFromConfig(cfg), nil
 }
 
-func runSync(ctx context.Context, client S3Client, cli *CLI, dbHost, dbPort, dbUser, dbPassword, dbName, onS3FetchError, onApplyFailed, onApplySucceeded string) error {
+func runSync(ctx context.Context, client S3Client, cli *CLI, dbHost, dbPort, dbUser, dbPassword, dbName, onS3FetchError, onBeforeApply, onApplyFailed, onApplySucceeded string) error {
 	slog.Info("Finding latest schema...")
 
 	// Find the latest schema file
@@ -232,6 +234,9 @@ func runSync(ctx context.Context, client S3Client, cli *CLI, dbHost, dbPort, dbU
 		}
 		return fmt.Errorf("failed to download schema: %w", err)
 	}
+
+	// Run on-before-apply hook
+	runHook("on-before-apply", onBeforeApply)
 
 	// Apply schema using psqldef
 	if err := applySchema(schema, dbHost, dbPort, dbUser, dbPassword, dbName); err != nil {

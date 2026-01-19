@@ -90,7 +90,7 @@ func startMetricsServer(addr string) {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	slog.Info("Starting metrics server", "addr", addr)
+	slog.Info("Starting metrics server", "addr", addr, "metrics", "http://"+addr+"/metrics", "health", "http://"+addr+"/health")
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		slog.Error("Metrics server error", "error", err)
 	}

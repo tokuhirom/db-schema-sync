@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -345,11 +346,16 @@ func runSync(ctx context.Context, client S3Client, cli *CLI, dbHost, dbPort, dbU
 	recordApplyAttempt()
 
 	// Apply schema using psqldef
-	if err := applySchema(schema, dbHost, dbPort, dbUser, dbPassword, dbName); err != nil {
+	applyResult, err := applySchema(schema, dbHost, dbPort, dbUser, dbPassword, dbName)
+	if err != nil {
 		recordApplyError()
 		hookEnv := *baseHookEnv
 		hookEnv.Version = latestVersion
 		hookEnv.Error = err.Error()
+		if applyResult != nil {
+			hookEnv.Stdout = applyResult.Stdout
+			hookEnv.Stderr = applyResult.Stderr
+		}
 		runHook("on-apply-failed", onApplyFailed, &hookEnv)
 		return fmt.Errorf("failed to apply schema: %w", err)
 	}
@@ -570,25 +576,39 @@ func downloadSchemaFromS3(ctx context.Context, client S3Client, bucket, key stri
 	return io.ReadAll(result.Body)
 }
 
-func applySchema(schema []byte, dbHost, dbPort, dbUser, dbPassword, dbName string) error {
+// ApplyResult contains the output from applySchema
+type ApplyResult struct {
+	Stdout string
+	Stderr string
+}
+
+func applySchema(schema []byte, dbHost, dbPort, dbUser, dbPassword, dbName string) (*ApplyResult, error) {
 	// Save schema to temporary file
 	tmpFile, err := os.CreateTemp("", "schema-*.sql")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer func() { _ = os.Remove(tmpFile.Name()) }()
 	defer func() { _ = tmpFile.Close() }()
 
 	if _, err := tmpFile.Write(schema); err != nil {
-		return err
+		return nil, err
 	}
 
 	// Run psqldef to apply schema
 	cmd := exec.Command("psqldef", "-U", dbUser, "-h", dbHost, "-p", dbPort, "--password", dbPassword, dbName, "--file", tmpFile.Name())
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
 
-	return cmd.Run()
+	// Capture stdout/stderr while also writing to os.Stdout/os.Stderr
+	var stdoutBuf, stderrBuf bytes.Buffer
+	cmd.Stdout = io.MultiWriter(os.Stdout, &stdoutBuf)
+	cmd.Stderr = io.MultiWriter(os.Stderr, &stderrBuf)
+
+	err = cmd.Run()
+	result := &ApplyResult{
+		Stdout: stdoutBuf.String(),
+		Stderr: stderrBuf.String(),
+	}
+	return result, err
 }
 
 // buildCompletionMarkerKey constructs the S3 key for the completion marker
@@ -664,6 +684,8 @@ type HookEnv struct {
 	Error         string
 	CompletedFile string
 	AppVersion    string
+	Stdout        string
+	Stderr        string
 }
 
 // toEnvVars converts HookEnv to a slice of environment variable strings
@@ -689,6 +711,12 @@ func (h *HookEnv) toEnvVars() []string {
 	}
 	if h.AppVersion != "" {
 		env = append(env, "DB_SCHEMA_SYNC_APP_VERSION="+h.AppVersion)
+	}
+	if h.Stdout != "" {
+		env = append(env, "DB_SCHEMA_SYNC_STDOUT="+h.Stdout)
+	}
+	if h.Stderr != "" {
+		env = append(env, "DB_SCHEMA_SYNC_STDERR="+h.Stderr)
 	}
 	return env
 }

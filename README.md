@@ -77,6 +77,31 @@ All options can be set via **environment variables** or **CLI flags**. CLI flags
 | Flag | Environment Variable | Description | Default |
 |------|---------------------|-------------|---------|
 | `--interval` | `INTERVAL` | Polling interval | 1m |
+| `--metrics-addr` | `METRICS_ADDR` | Metrics endpoint address (e.g., `:9090`). Disabled if not set | (disabled) |
+
+#### Prometheus Metrics (watch only)
+
+When `--metrics-addr` is set, the tool exposes Prometheus metrics on the specified address.
+
+**Endpoints:**
+- `/metrics` - Prometheus metrics
+- `/health` - Health check (returns 200 OK)
+
+**Exposed Metrics:**
+
+| Metric Name | Type | Description |
+|-------------|------|-------------|
+| `db_schema_sync_apply_total` | Counter | Total number of schema apply attempts |
+| `db_schema_sync_apply_success_total` | Counter | Total number of successful schema applies |
+| `db_schema_sync_apply_error_total` | Counter | Total number of failed schema applies |
+| `db_schema_sync_s3_fetch_total` | Counter | Total number of S3 fetch attempts |
+| `db_schema_sync_s3_fetch_error_total` | Counter | Total number of S3 fetch errors |
+| `db_schema_sync_consecutive_failures` | Gauge | Current number of consecutive failures |
+| `db_schema_sync_last_apply_timestamp_seconds` | Gauge | Unix timestamp of the last successful schema apply |
+| `db_schema_sync_process_start_time_seconds` | Gauge | Unix timestamp when the process started |
+| `db_schema_sync_last_applied_version_info` | Gauge | Information about the last applied version (with `version` label) |
+
+In addition, the Go Prometheus client automatically exposes `process_*` and `go_*` metrics.
 
 #### Lifecycle Hooks (watch/apply)
 
@@ -113,6 +138,22 @@ db-schema-sync watch \
   --interval 30s \
   --on-apply-succeeded "curl -X POST https://my-api/notify"
 ```
+
+#### Watch mode with Prometheus metrics:
+
+```bash
+db-schema-sync watch \
+  --s3-bucket my-bucket \
+  --path-prefix schemas/ \
+  --db-host localhost \
+  --db-port 5432 \
+  --db-user user \
+  --db-password pass \
+  --db-name mydb \
+  --metrics-addr :9090
+```
+
+Metrics are available at `http://localhost:9090/metrics` and health check at `http://localhost:9090/health`.
 
 #### Apply mode (single-shot):
 

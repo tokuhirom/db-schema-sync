@@ -82,6 +82,23 @@ All options can be set via **environment variables** or **CLI flags**. CLI flags
 |------|---------------------|-------------|---------|
 | `--export-after-apply` | `EXPORT_AFTER_APPLY` | Export schema after successful apply and upload to S3 as `exported.sql` | false |
 
+#### Concurrency Control (watch/apply only)
+
+| Flag | Environment Variable | Description | Default |
+|------|---------------------|-------------|---------|
+| `--skip-lock` | `SKIP_LOCK` | Skip advisory lock (not recommended for production) | false |
+
+**Advisory Lock:**
+
+When multiple instances of db-schema-sync run against the same database, they use PostgreSQL Advisory Locks to ensure only one instance applies the schema at a time. This prevents race conditions and duplicate schema applications.
+
+- Uses `pg_try_advisory_lock()` for non-blocking lock acquisition
+- If another process holds the lock, the current process skips the apply and logs "Another process is applying schema, skipping"
+- Lock is automatically released when the connection closes (crash-safe)
+- Lock scope is per-database, so different databases can be updated concurrently
+
+**Note:** Use `--skip-lock` only for testing or when you're certain only one instance will run.
+
 #### Watch Mode Settings
 
 | Flag | Environment Variable | Description | Default |

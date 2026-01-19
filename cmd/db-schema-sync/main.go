@@ -30,8 +30,8 @@ type S3Client interface {
 // CLI defines the command line interface with subcommands
 type CLI struct {
 	// Global S3 settings
-	S3Bucket   string `help:"S3 bucket name" env:"S3_BUCKET" required:""`
-	S3Endpoint string `help:"Custom S3 endpoint URL for S3-compatible storage" env:"S3_ENDPOINT"`
+	S3Bucket   string `name:"s3-bucket" help:"S3 bucket name" env:"S3_BUCKET" required:""`
+	S3Endpoint string `name:"s3-endpoint" help:"Custom S3 endpoint URL for S3-compatible storage" env:"S3_ENDPOINT"`
 	PathPrefix string `help:"S3 path prefix (e.g., 'schemas/')" env:"PATH_PREFIX" required:""`
 	SchemaFile string `help:"Schema file name" env:"SCHEMA_FILE" default:"schema.sql"`
 

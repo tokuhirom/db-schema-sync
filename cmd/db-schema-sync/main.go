@@ -41,7 +41,7 @@ type CLI struct {
 	// Subcommands
 	Watch          WatchCmd          `cmd:"" help:"Run in daemon mode, continuously polling for schema updates"`
 	Apply          ApplyCmd          `cmd:"" help:"Apply schema once and exit"`
-	Diff           DiffCmd           `cmd:"" help:"Show diff between S3 schema and local file"`
+	Plan           PlanCmd           `cmd:"" help:"Show what DDL would be applied to the database (dry-run)"`
 	FetchCompleted FetchCompletedCmd `cmd:"" name:"fetch-completed" help:"Fetch the latest completed schema from S3"`
 }
 
@@ -89,15 +89,9 @@ type ApplyCmd struct {
 	OnApplySucceeded string `help:"Command to run after schema is successfully applied" env:"ON_APPLY_SUCCEEDED"`
 }
 
-// DiffCmd shows the diff between S3 schema and a local file or database
-type DiffCmd struct {
-	LocalFile  string `arg:"" optional:"" help:"Local schema file to compare against S3"`
-	CompareDB  bool   `name:"db" help:"Compare S3 schema against actual database using psqldef --dry-run"`
-	DBHost     string `help:"Database host" env:"DB_HOST"`
-	DBPort     string `help:"Database port" env:"DB_PORT"`
-	DBUser     string `help:"Database user" env:"DB_USER"`
-	DBPassword string `help:"Database password" env:"DB_PASSWORD"`
-	DBName     string `help:"Database name" env:"DB_NAME"`
+// PlanCmd shows what DDL would be applied (offline comparison using psqldef)
+type PlanCmd struct {
+	LocalFile string `arg:"" help:"Local schema file to compare against S3 (desired state)"`
 }
 
 // FetchCompletedCmd fetches the latest completed schema from S3
@@ -181,48 +175,43 @@ func (cmd *ApplyCmd) Run(cli *CLI) error {
 	return runSync(ctx, client, cli, cmd.DBHost, cmd.DBPort, cmd.DBUser, cmd.DBPassword, cmd.DBName, cmd.ExportAfterApply, "", cmd.OnBeforeApply, cmd.OnApplyFailed, cmd.OnApplySucceeded)
 }
 
-// Run executes the diff command
-func (cmd *DiffCmd) Run(cli *CLI) error {
-	// Validate: either LocalFile or --db must be specified
-	if cmd.LocalFile == "" && !cmd.CompareDB {
-		return fmt.Errorf("either a local file or --db flag must be specified")
-	}
-	if cmd.LocalFile != "" && cmd.CompareDB {
-		return fmt.Errorf("cannot specify both a local file and --db flag")
-	}
-
-	// Validate DB parameters when --db is specified
-	if cmd.CompareDB {
-		if cmd.DBHost == "" || cmd.DBPort == "" || cmd.DBUser == "" || cmd.DBPassword == "" || cmd.DBName == "" {
-			return fmt.Errorf("all database parameters (--db-host, --db-port, --db-user, --db-password, --db-name) are required when using --db flag")
-		}
-	}
-
+// Run executes the plan command - shows what DDL would be applied (offline mode)
+func (cmd *PlanCmd) Run(cli *CLI) error {
 	ctx := context.Background()
 	client, err := createS3Client(ctx, cli.S3Endpoint)
 	if err != nil {
 		return err
 	}
 
-	// Find the latest completed schema
+	// Find the latest completed schema version
 	latestSchemaKey, latestVersion, err := findLatestCompletedSchema(ctx, client, cli.S3Bucket, cli.PathPrefix, cli.SchemaFile, cli.CompletedFile)
 	if err != nil {
 		return fmt.Errorf("failed to find latest completed schema: %w", err)
 	}
 
-	slog.Info("Found latest completed schema", "version", latestVersion, "key", latestSchemaKey)
-
-	// Download schema from S3
-	s3Schema, err := downloadSchemaFromS3(ctx, client, cli.S3Bucket, latestSchemaKey)
+	// Try to get exported.sql first (current DB state), fall back to schema.sql
+	exportedKey := buildExportedSchemaKey(latestSchemaKey)
+	currentSchema, err := downloadSchemaFromS3(ctx, client, cli.S3Bucket, exportedKey)
 	if err != nil {
-		return fmt.Errorf("failed to download schema from S3: %w", err)
+		// Fall back to schema.sql
+		slog.Info("exported.sql not found, using schema.sql as current state", "version", latestVersion)
+		currentSchema, err = downloadSchemaFromS3(ctx, client, cli.S3Bucket, latestSchemaKey)
+		if err != nil {
+			return fmt.Errorf("failed to download current schema from S3: %w", err)
+		}
+	} else {
+		slog.Info("Using exported.sql as current state", "version", latestVersion, "key", exportedKey)
 	}
 
-	// Show diff based on mode
-	if cmd.CompareDB {
-		return showSchemaDiff(s3Schema, cmd.DBHost, cmd.DBPort, cmd.DBUser, cmd.DBPassword, cmd.DBName)
+	// Read local file as desired state
+	desiredSchema, err := os.ReadFile(cmd.LocalFile)
+	if err != nil {
+		return fmt.Errorf("failed to read local file: %w", err)
 	}
-	return showDiff(s3Schema, latestSchemaKey, cmd.LocalFile)
+	slog.Info("Using local file as desired state", "file", cmd.LocalFile)
+
+	// Run psqldef in offline mode: psqldef current.sql < desired.sql
+	return runPsqldefOffline(currentSchema, desiredSchema)
 }
 
 // Run executes the fetch-completed command
@@ -617,55 +606,25 @@ func createCompletionMarker(ctx context.Context, client S3Client, bucket, schema
 	return err
 }
 
-func showDiff(s3Schema []byte, s3Path, localPath string) error {
-	// Create temporary files for diff
-	s3File, err := os.CreateTemp("", "s3-schema-*.sql")
+// runPsqldefOffline runs psqldef in offline mode: psqldef current.sql < desired.sql
+func runPsqldefOffline(currentSchema, desiredSchema []byte) error {
+	// Save current schema to temporary file
+	currentFile, err := os.CreateTemp("", "current-*.sql")
 	if err != nil {
 		return err
 	}
-	defer func() { _ = os.Remove(s3File.Name()) }()
+	defer func() { _ = os.Remove(currentFile.Name()) }()
 
-	if _, err := s3File.Write(s3Schema); err != nil {
+	if _, err := currentFile.Write(currentSchema); err != nil {
 		return err
 	}
-	if err := s3File.Close(); err != nil {
-		return err
-	}
-
-	// Run diff command
-	cmd := exec.Command("diff", "-u", "--label", s3Path, "--label", localPath, s3File.Name(), localPath)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	err = cmd.Run()
-	if err != nil {
-		// diff returns exit code 1 if files differ, which is not an error for us
-		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
-			return nil
-		}
+	if err := currentFile.Close(); err != nil {
 		return err
 	}
 
-	fmt.Println("No differences found.")
-	return nil
-}
-
-// showSchemaDiff compares S3 schema against actual database using psqldef --dry-run
-func showSchemaDiff(s3Schema []byte, dbHost, dbPort, dbUser, dbPassword, dbName string) error {
-	// Save schema to temporary file
-	tmpFile, err := os.CreateTemp("", "schema-*.sql")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = os.Remove(tmpFile.Name()) }()
-	defer func() { _ = tmpFile.Close() }()
-
-	if _, err := tmpFile.Write(s3Schema); err != nil {
-		return err
-	}
-
-	// Run psqldef with --dry-run to show what would be applied
-	cmd := exec.Command("psqldef", "-U", dbUser, "-h", dbHost, "-p", dbPort, "--password", dbPassword, dbName, "--dry-run", "--file", tmpFile.Name())
+	// Run psqldef in offline mode
+	cmd := exec.Command("psqldef", currentFile.Name())
+	cmd.Stdin = strings.NewReader(string(desiredSchema))
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 

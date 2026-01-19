@@ -1,5 +1,8 @@
 # Changelog
 
+## [v0.0.13](https://github.com/tokuhirom/db-schema-sync/compare/v0.0.12...v0.0.13) - 2026-01-19
+- feat: add dry-run output to on-before-apply hook by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/33
+
 ## [v0.0.12](https://github.com/tokuhirom/db-schema-sync/compare/v0.0.11...v0.0.12) - 2026-01-19
 - feat: add PostgreSQL advisory lock for concurrent apply protection by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/28
 

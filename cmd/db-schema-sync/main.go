@@ -59,6 +59,9 @@ type WatchCmd struct {
 	// Metrics settings
 	MetricsAddr string `help:"Metrics endpoint address (e.g., ':9090'). Metrics disabled if not set" env:"METRICS_ADDR"`
 
+	// Export after apply settings
+	ExportAfterApply bool `help:"Export schema after successful apply and upload to S3 as exported.sql" env:"EXPORT_AFTER_APPLY"`
+
 	// Lifecycle hooks
 	OnStart          string `help:"Command to run when the process starts" env:"ON_START"`
 	OnS3FetchError   string `help:"Command to run when S3 fetch fails 3 times consecutively" env:"ON_S3_FETCH_ERROR"`
@@ -75,6 +78,9 @@ type ApplyCmd struct {
 	DBUser     string `help:"Database user" env:"DB_USER" required:""`
 	DBPassword string `help:"Database password" env:"DB_PASSWORD" required:""`
 	DBName     string `help:"Database name" env:"DB_NAME" required:""`
+
+	// Export after apply settings
+	ExportAfterApply bool `help:"Export schema after successful apply and upload to S3 as exported.sql" env:"EXPORT_AFTER_APPLY"`
 
 	// Lifecycle hooks
 	OnBeforeApply    string `help:"Command to run before schema application starts" env:"ON_BEFORE_APPLY"`
@@ -149,7 +155,7 @@ func (cmd *WatchCmd) Run(cli *CLI) error {
 
 	// Start polling loop
 	for {
-		if err := runSync(ctx, client, cli, cmd.DBHost, cmd.DBPort, cmd.DBUser, cmd.DBPassword, cmd.DBName, cmd.OnS3FetchError, cmd.OnBeforeApply, cmd.OnApplyFailed, cmd.OnApplySucceeded); err != nil {
+		if err := runSync(ctx, client, cli, cmd.DBHost, cmd.DBPort, cmd.DBUser, cmd.DBPassword, cmd.DBName, cmd.ExportAfterApply, cmd.OnS3FetchError, cmd.OnBeforeApply, cmd.OnApplyFailed, cmd.OnApplySucceeded); err != nil {
 			slog.Error("Error in sync", "error", err)
 		}
 
@@ -166,7 +172,7 @@ func (cmd *ApplyCmd) Run(cli *CLI) error {
 		return err
 	}
 
-	return runSync(ctx, client, cli, cmd.DBHost, cmd.DBPort, cmd.DBUser, cmd.DBPassword, cmd.DBName, "", cmd.OnBeforeApply, cmd.OnApplyFailed, cmd.OnApplySucceeded)
+	return runSync(ctx, client, cli, cmd.DBHost, cmd.DBPort, cmd.DBUser, cmd.DBPassword, cmd.DBName, cmd.ExportAfterApply, "", cmd.OnBeforeApply, cmd.OnApplyFailed, cmd.OnApplySucceeded)
 }
 
 // Run executes the diff command
@@ -230,7 +236,7 @@ func createS3Client(ctx context.Context, endpoint string) (*s3.Client, error) {
 	return s3.NewFromConfig(cfg), nil
 }
 
-func runSync(ctx context.Context, client S3Client, cli *CLI, dbHost, dbPort, dbUser, dbPassword, dbName, onS3FetchError, onBeforeApply, onApplyFailed, onApplySucceeded string) error {
+func runSync(ctx context.Context, client S3Client, cli *CLI, dbHost, dbPort, dbUser, dbPassword, dbName string, exportAfterApply bool, onS3FetchError, onBeforeApply, onApplyFailed, onApplySucceeded string) error {
 	slog.Info("Finding latest schema...")
 
 	// Record S3 fetch attempt
@@ -301,6 +307,21 @@ func runSync(ctx context.Context, client S3Client, cli *CLI, dbHost, dbPort, dbU
 
 	// Record the applied version
 	lastAppliedVersion = latestVersion
+
+	// Export schema from DB and upload to S3 if enabled
+	if exportAfterApply {
+		exportedSchema, err := exportSchemaFromDB(dbHost, dbPort, dbUser, dbPassword, dbName)
+		if err != nil {
+			slog.Warn("Could not export schema from DB", "error", err)
+		} else {
+			exportedKey := buildExportedSchemaKey(latestSchemaKey)
+			if err := uploadSchemaToS3(ctx, client, cli.S3Bucket, exportedKey, exportedSchema); err != nil {
+				slog.Warn("Could not upload exported schema to S3", "error", err)
+			} else {
+				slog.Info("Exported schema uploaded to S3", "key", exportedKey)
+			}
+		}
+	}
 
 	// Create completion marker in S3
 	if cli.CompletedFile != "" {
@@ -615,4 +636,30 @@ func runCommand(command string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// exportSchemaFromDB exports the current schema from the database using psqldef --export
+func exportSchemaFromDB(dbHost, dbPort, dbUser, dbPassword, dbName string) ([]byte, error) {
+	cmd := exec.Command("psqldef", "-U", dbUser, "-h", dbHost, "-p", dbPort, "--password", dbPassword, dbName, "--export")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("psqldef --export failed: %w", err)
+	}
+	return output, nil
+}
+
+// buildExportedSchemaKey constructs the S3 key for the exported schema (same directory as schema.sql, named exported.sql)
+func buildExportedSchemaKey(schemaKey string) string {
+	schemaDir := path.Dir(schemaKey)
+	return path.Join(schemaDir, "exported.sql")
+}
+
+// uploadSchemaToS3 uploads the exported schema to S3
+func uploadSchemaToS3(ctx context.Context, client S3Client, bucket, key string, schema []byte) error {
+	_, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+		Body:   strings.NewReader(string(schema)),
+	})
+	return err
 }

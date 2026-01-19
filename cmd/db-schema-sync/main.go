@@ -42,6 +42,7 @@ type CLI struct {
 	Watch WatchCmd `cmd:"" help:"Run in daemon mode, continuously polling for schema updates"`
 	Apply ApplyCmd `cmd:"" help:"Apply schema once and exit"`
 	Diff  DiffCmd  `cmd:"" help:"Show diff between S3 schema and local file"`
+	Fetch FetchCmd `cmd:"" help:"Fetch the latest completed schema from S3"`
 }
 
 // WatchCmd runs the sync in daemon mode with polling
@@ -85,6 +86,11 @@ type ApplyCmd struct {
 // DiffCmd shows the diff between S3 schema and a local file
 type DiffCmd struct {
 	LocalFile string `arg:"" help:"Local schema file to compare against S3"`
+}
+
+// FetchCmd fetches the latest completed schema from S3
+type FetchCmd struct {
+	Output string `short:"o" help:"Output file path (default: stdout)"`
 }
 
 var (
@@ -187,6 +193,41 @@ func (cmd *DiffCmd) Run(cli *CLI) error {
 
 	// Show diff
 	return showDiff(s3Schema, latestSchemaKey, cmd.LocalFile)
+}
+
+// Run executes the fetch command
+func (cmd *FetchCmd) Run(cli *CLI) error {
+	ctx := context.Background()
+	client, err := createS3Client(ctx, cli.S3Endpoint)
+	if err != nil {
+		return err
+	}
+
+	// Find the latest completed schema
+	latestSchemaKey, latestVersion, err := findLatestCompletedSchema(ctx, client, cli.S3Bucket, cli.PathPrefix, cli.SchemaFile, cli.CompletedFile)
+	if err != nil {
+		return fmt.Errorf("failed to find latest completed schema: %w", err)
+	}
+
+	slog.Info("Found latest completed schema", "version", latestVersion, "key", latestSchemaKey)
+
+	// Download schema from S3
+	schema, err := downloadSchemaFromS3(ctx, client, cli.S3Bucket, latestSchemaKey)
+	if err != nil {
+		return fmt.Errorf("failed to download schema from S3: %w", err)
+	}
+
+	// Output to file or stdout
+	if cmd.Output != "" {
+		if err := os.WriteFile(cmd.Output, schema, 0644); err != nil {
+			return fmt.Errorf("failed to write schema to file: %w", err)
+		}
+		slog.Info("Schema written to file", "file", cmd.Output)
+	} else {
+		fmt.Print(string(schema))
+	}
+
+	return nil
 }
 
 func createS3Client(ctx context.Context, endpoint string) (*s3.Client, error) {

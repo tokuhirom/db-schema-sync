@@ -8,16 +8,16 @@ import (
 	_ "github.com/lib/pq"
 )
 
-// AdvisoryLockID はスキーマ適用時に使用するロックID
-// "DBSCHEMA" を16進数で表現した値
+// AdvisoryLockID is the lock ID used during schema application.
+// It represents "DBSCHEMA" in hexadecimal.
 const AdvisoryLockID int64 = 0x4442534348454D41
 
-// AdvisoryLocker はPostgreSQL Advisory Lockを管理する
+// AdvisoryLocker manages PostgreSQL Advisory Locks.
 type AdvisoryLocker struct {
 	db *sql.DB
 }
 
-// NewAdvisoryLocker は新しいAdvisoryLockerを作成する
+// NewAdvisoryLocker creates a new AdvisoryLocker.
 func NewAdvisoryLocker(dbHost, dbPort, dbUser, dbPassword, dbName string) (*AdvisoryLocker, error) {
 	connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
 		dbHost, dbPort, dbUser, dbPassword, dbName)
@@ -36,8 +36,8 @@ func NewAdvisoryLocker(dbHost, dbPort, dbUser, dbPassword, dbName string) (*Advi
 	return &AdvisoryLocker{db: db}, nil
 }
 
-// TryLock は非ブロッキングでロック取得を試みる
-// 取得成功: true, nil / 既にロック中: false, nil / エラー: false, error
+// TryLock attempts to acquire the lock in a non-blocking manner.
+// Returns: acquired (true, nil) / already locked (false, nil) / error (false, error)
 func (l *AdvisoryLocker) TryLock(ctx context.Context) (bool, error) {
 	var acquired bool
 	err := l.db.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1)", AdvisoryLockID).Scan(&acquired)
@@ -47,7 +47,7 @@ func (l *AdvisoryLocker) TryLock(ctx context.Context) (bool, error) {
 	return acquired, nil
 }
 
-// Unlock はロックを解放する
+// Unlock releases the lock.
 func (l *AdvisoryLocker) Unlock(ctx context.Context) error {
 	var released bool
 	err := l.db.QueryRowContext(ctx, "SELECT pg_advisory_unlock($1)", AdvisoryLockID).Scan(&released)
@@ -60,7 +60,7 @@ func (l *AdvisoryLocker) Unlock(ctx context.Context) error {
 	return nil
 }
 
-// Close は接続を閉じる（ロックも自動解放される）
+// Close closes the connection (lock is automatically released).
 func (l *AdvisoryLocker) Close() error {
 	return l.db.Close()
 }

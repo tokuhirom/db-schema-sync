@@ -39,10 +39,10 @@ type CLI struct {
 	CompletedFile string `help:"Completion marker file name" env:"COMPLETED_FILE" default:"completed"`
 
 	// Subcommands
-	Watch WatchCmd `cmd:"" help:"Run in daemon mode, continuously polling for schema updates"`
-	Apply ApplyCmd `cmd:"" help:"Apply schema once and exit"`
-	Diff  DiffCmd  `cmd:"" help:"Show diff between S3 schema and local file"`
-	Fetch FetchCmd `cmd:"" help:"Fetch the latest completed schema from S3"`
+	Watch          WatchCmd          `cmd:"" help:"Run in daemon mode, continuously polling for schema updates"`
+	Apply          ApplyCmd          `cmd:"" help:"Apply schema once and exit"`
+	Diff           DiffCmd           `cmd:"" help:"Show diff between S3 schema and local file"`
+	FetchCompleted FetchCompletedCmd `cmd:"" name:"fetch-completed" help:"Fetch the latest completed schema from S3"`
 }
 
 // WatchCmd runs the sync in daemon mode with polling
@@ -88,8 +88,8 @@ type DiffCmd struct {
 	LocalFile string `arg:"" help:"Local schema file to compare against S3"`
 }
 
-// FetchCmd fetches the latest completed schema from S3
-type FetchCmd struct {
+// FetchCompletedCmd fetches the latest completed schema from S3
+type FetchCompletedCmd struct {
 	Output string `short:"o" help:"Output file path (default: stdout)"`
 }
 
@@ -195,8 +195,8 @@ func (cmd *DiffCmd) Run(cli *CLI) error {
 	return showDiff(s3Schema, latestSchemaKey, cmd.LocalFile)
 }
 
-// Run executes the fetch command
-func (cmd *FetchCmd) Run(cli *CLI) error {
+// Run executes the fetch-completed command
+func (cmd *FetchCompletedCmd) Run(cli *CLI) error {
 	ctx := context.Background()
 	client, err := createS3Client(ctx, cli.S3Endpoint)
 	if err != nil {

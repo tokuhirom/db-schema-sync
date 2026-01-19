@@ -1,5 +1,8 @@
 # Changelog
 
+## [v0.0.7](https://github.com/tokuhirom/db-schema-sync/compare/v0.0.6...v0.0.7) - 2026-01-19
+- fix: use correct flag names for S3 options by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/15
+
 ## [v0.0.6](https://github.com/tokuhirom/db-schema-sync/compare/v0.0.5...v0.0.6) - 2026-01-19
 - feat: add on-before-apply lifecycle hook by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/12
 - feat: add Prometheus metrics endpoint to watch command by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/14

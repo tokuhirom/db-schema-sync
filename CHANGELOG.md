@@ -1,5 +1,8 @@
 # Changelog
 
+## [v0.0.10](https://github.com/tokuhirom/db-schema-sync/compare/v0.0.9...v0.0.10) - 2026-01-19
+- test: add comprehensive unit tests for S3 operations and hooks by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/26
+
 ## [v0.0.9](https://github.com/tokuhirom/db-schema-sync/compare/v0.0.8...v0.0.9) - 2026-01-19
 - docs: update README for new features by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/23
 - feat: add environment variables to lifecycle hooks by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/25

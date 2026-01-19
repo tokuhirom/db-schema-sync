@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.0.9](https://github.com/tokuhirom/db-schema-sync/compare/v0.0.8...v0.0.9) - 2026-01-19
+- docs: update README for new features by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/23
+- feat: add environment variables to lifecycle hooks by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/25
+
 ## [v0.0.8](https://github.com/tokuhirom/db-schema-sync/compare/v0.0.7...v0.0.8) - 2026-01-19
 - docs: add AWS environment variables to help output by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/17
 - feat: add --db flag to diff command for database comparison by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/19

@@ -337,9 +337,17 @@ func runSync(ctx context.Context, client S3Client, cli *CLI, dbHost, dbPort, dbU
 		return fmt.Errorf("failed to download schema: %w", err)
 	}
 
+	// Run dry-run to get DDL that will be applied
+	dryRunOutput, err := dryRunSchema(schema, dbHost, dbPort, dbUser, dbPassword, dbName)
+	if err != nil {
+		slog.Warn("Dry-run failed", "error", err)
+		// Continue with apply even if dry-run fails
+	}
+
 	// Run on-before-apply hook
 	hookEnv := *baseHookEnv
 	hookEnv.Version = latestVersion
+	hookEnv.DryRun = dryRunOutput
 	runHook("on-before-apply", onBeforeApply, &hookEnv)
 
 	// Record apply attempt
@@ -582,6 +590,30 @@ type ApplyResult struct {
 	Stderr string
 }
 
+// dryRunSchema runs psqldef with --dry-run to show what DDL would be applied
+func dryRunSchema(schema []byte, dbHost, dbPort, dbUser, dbPassword, dbName string) (string, error) {
+	// Save schema to temporary file
+	tmpFile, err := os.CreateTemp("", "schema-*.sql")
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
+	defer func() { _ = tmpFile.Close() }()
+
+	if _, err := tmpFile.Write(schema); err != nil {
+		return "", err
+	}
+
+	// Run psqldef with --dry-run
+	cmd := exec.Command("psqldef", "-U", dbUser, "-h", dbHost, "-p", dbPort, "--password", dbPassword, dbName, "--dry-run", "--file", tmpFile.Name())
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return string(output), fmt.Errorf("dry-run failed: %w", err)
+	}
+	return string(output), nil
+}
+
 func applySchema(schema []byte, dbHost, dbPort, dbUser, dbPassword, dbName string) (*ApplyResult, error) {
 	// Save schema to temporary file
 	tmpFile, err := os.CreateTemp("", "schema-*.sql")
@@ -686,6 +718,7 @@ type HookEnv struct {
 	AppVersion    string
 	Stdout        string
 	Stderr        string
+	DryRun        string
 }
 
 // toEnvVars converts HookEnv to a slice of environment variable strings
@@ -717,6 +750,9 @@ func (h *HookEnv) toEnvVars() []string {
 	}
 	if h.Stderr != "" {
 		env = append(env, "DB_SCHEMA_SYNC_STDERR="+h.Stderr)
+	}
+	if h.DryRun != "" {
+		env = append(env, "DB_SCHEMA_SYNC_DRY_RUN="+h.DryRun)
 	}
 	return env
 }

@@ -1,5 +1,12 @@
 # Changelog
 
+## [v0.0.8](https://github.com/tokuhirom/db-schema-sync/compare/v0.0.7...v0.0.8) - 2026-01-19
+- docs: add AWS environment variables to help output by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/17
+- feat: add --db flag to diff command for database comparison by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/19
+- feat: add fetch subcommand to download latest completed schema by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/20
+- feat: add --export-after-apply flag to export schema after successful apply by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/22
+- feat: add plan command for offline schema comparison by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/21
+
 ## [v0.0.7](https://github.com/tokuhirom/db-schema-sync/compare/v0.0.6...v0.0.7) - 2026-01-19
 - fix: use correct flag names for S3 options by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/15
 

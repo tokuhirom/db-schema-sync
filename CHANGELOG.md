@@ -1,5 +1,8 @@
 # Changelog
 
+## [v0.0.12](https://github.com/tokuhirom/db-schema-sync/compare/v0.0.11...v0.0.12) - 2026-01-19
+- feat: add PostgreSQL advisory lock for concurrent apply protection by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/28
+
 ## [v0.0.11](https://github.com/tokuhirom/db-schema-sync/compare/v0.0.10...v0.0.11) - 2026-01-19
 - docs: add CLAUDE.md for Claude Code guidance by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/29
 - feat: capture psqldef output and pass to on-apply-failed hook by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/31

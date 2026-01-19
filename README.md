@@ -155,6 +155,7 @@ When hook commands are executed, the following environment variables are availab
 | `DB_SCHEMA_SYNC_APP_VERSION` | db-schema-sync version | All |
 | `DB_SCHEMA_SYNC_STDOUT` | psqldef stdout output | on-apply-failed |
 | `DB_SCHEMA_SYNC_STDERR` | psqldef stderr output | on-apply-failed |
+| `DB_SCHEMA_SYNC_DRY_RUN` | psqldef --dry-run output (DDL to be applied) | on-before-apply |
 
 Example hook script:
 ```bash

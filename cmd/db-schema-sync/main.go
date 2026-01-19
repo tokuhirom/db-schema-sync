@@ -59,6 +59,7 @@ type WatchCmd struct {
 	// Lifecycle hooks
 	OnStart          string `help:"Command to run when the process starts" env:"ON_START"`
 	OnS3FetchError   string `help:"Command to run when S3 fetch fails 3 times consecutively" env:"ON_S3_FETCH_ERROR"`
+	OnBeforeApply    string `help:"Command to run before schema application starts" env:"ON_BEFORE_APPLY"`
 	OnApplyFailed    string `help:"Command to run when schema application fails" env:"ON_APPLY_FAILED"`
 	OnApplySucceeded string `help:"Command to run after schema is successfully applied" env:"ON_APPLY_SUCCEEDED"`
 }
@@ -232,6 +233,9 @@ func runSync(ctx context.Context, client S3Client, cli *CLI, dbHost, dbPort, dbU
 		}
 		return fmt.Errorf("failed to download schema: %w", err)
 	}
+
+	// Run on-before-apply hook
+	runHook("on-before-apply", cli.OnBeforeApply)
 
 	// Apply schema using psqldef
 	if err := applySchema(schema, dbHost, dbPort, dbUser, dbPassword, dbName); err != nil {

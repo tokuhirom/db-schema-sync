@@ -84,6 +84,7 @@ All options can be set via **environment variables** or **CLI flags**. CLI flags
 |------|---------------------|-------------|
 | `--on-start` | `ON_START` | Command to run when the process starts (watch only) |
 | `--on-s3-fetch-error` | `ON_S3_FETCH_ERROR` | Command to run when S3 fetch fails 3 times consecutively (watch only) |
+| `--on-before-apply` | `ON_BEFORE_APPLY` | Command to run before schema application starts |
 | `--on-apply-failed` | `ON_APPLY_FAILED` | Command to run when schema application fails |
 | `--on-apply-succeeded` | `ON_APPLY_SUCCEEDED` | Command to run after schema is successfully applied |
 

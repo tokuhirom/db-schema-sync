@@ -123,6 +123,29 @@ In addition, the Go Prometheus client automatically exposes `process_*` and `go_
 | `--on-apply-failed` | `ON_APPLY_FAILED` | Command to run when schema application fails |
 | `--on-apply-succeeded` | `ON_APPLY_SUCCEEDED` | Command to run after schema is successfully applied |
 
+**Hook Environment Variables:**
+
+When hook commands are executed, the following environment variables are available:
+
+| Variable | Description | Hooks |
+|----------|-------------|-------|
+| `DB_SCHEMA_SYNC_S3_BUCKET` | S3 bucket name | All |
+| `DB_SCHEMA_SYNC_PATH_PREFIX` | S3 path prefix | All |
+| `DB_SCHEMA_SYNC_SCHEMA_FILE` | Schema file name | All |
+| `DB_SCHEMA_SYNC_COMPLETED_FILE` | Completion marker file name | All |
+| `DB_SCHEMA_SYNC_VERSION` | Schema version being applied | on-before-apply, on-apply-failed, on-apply-succeeded, on-s3-fetch-error |
+| `DB_SCHEMA_SYNC_ERROR` | Error message | on-apply-failed, on-s3-fetch-error |
+| `DB_SCHEMA_SYNC_APP_VERSION` | db-schema-sync version | All |
+
+Example hook script:
+```bash
+#!/bin/bash
+# notify-slack.sh - Send notification to Slack
+curl -X POST https://hooks.slack.com/services/xxx \
+  -H 'Content-Type: application/json' \
+  -d "{\"text\": \"Schema apply failed for version $DB_SCHEMA_SYNC_VERSION: $DB_SCHEMA_SYNC_ERROR\"}"
+```
+
 #### AWS Credentials
 
 AWS credentials are handled by the AWS SDK and can be configured via:

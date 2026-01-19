@@ -19,6 +19,9 @@ import (
 	"github.com/hashicorp/go-version"
 )
 
+// Version is set at build time using ldflags
+var Version = "dev"
+
 // S3Client defines the interface for S3 operations
 type S3Client interface {
 	ListObjectsV2(ctx context.Context, params *s3.ListObjectsV2Input, optFns ...func(*s3.Options)) (*s3.ListObjectsV2Output, error)
@@ -269,6 +272,15 @@ func createS3Client(ctx context.Context, endpoint string) (*s3.Client, error) {
 func runSync(ctx context.Context, client S3Client, cli *CLI, dbHost, dbPort, dbUser, dbPassword, dbName string, exportAfterApply bool, onS3FetchError, onBeforeApply, onApplyFailed, onApplySucceeded string) error {
 	slog.Info("Finding latest schema...")
 
+	// Base hook environment with S3 settings
+	baseHookEnv := &HookEnv{
+		S3Bucket:      cli.S3Bucket,
+		PathPrefix:    cli.PathPrefix,
+		SchemaFile:    cli.SchemaFile,
+		CompletedFile: cli.CompletedFile,
+		AppVersion:    Version,
+	}
+
 	// Record S3 fetch attempt
 	recordS3FetchAttempt()
 
@@ -281,7 +293,9 @@ func runSync(ctx context.Context, client S3Client, cli *CLI, dbHost, dbPort, dbU
 		slog.Error("Failed to find latest schema", "error", err, "consecutive_failures", consecutiveFailureCount)
 
 		if consecutiveFailureCount >= maxConsecutiveFailures {
-			runHook("on-s3-fetch-error", onS3FetchError)
+			hookEnv := *baseHookEnv
+			hookEnv.Error = err.Error()
+			runHook("on-s3-fetch-error", onS3FetchError, &hookEnv)
 		}
 		return fmt.Errorf("failed to find latest schema: %w", err)
 	}
@@ -314,13 +328,18 @@ func runSync(ctx context.Context, client S3Client, cli *CLI, dbHost, dbPort, dbU
 		recordS3FetchError()
 		recordConsecutiveFailures(consecutiveFailureCount)
 		if consecutiveFailureCount >= maxConsecutiveFailures {
-			runHook("on-s3-fetch-error", onS3FetchError)
+			hookEnv := *baseHookEnv
+			hookEnv.Version = latestVersion
+			hookEnv.Error = err.Error()
+			runHook("on-s3-fetch-error", onS3FetchError, &hookEnv)
 		}
 		return fmt.Errorf("failed to download schema: %w", err)
 	}
 
 	// Run on-before-apply hook
-	runHook("on-before-apply", onBeforeApply)
+	hookEnv := *baseHookEnv
+	hookEnv.Version = latestVersion
+	runHook("on-before-apply", onBeforeApply, &hookEnv)
 
 	// Record apply attempt
 	recordApplyAttempt()
@@ -328,7 +347,10 @@ func runSync(ctx context.Context, client S3Client, cli *CLI, dbHost, dbPort, dbU
 	// Apply schema using psqldef
 	if err := applySchema(schema, dbHost, dbPort, dbUser, dbPassword, dbName); err != nil {
 		recordApplyError()
-		runHook("on-apply-failed", onApplyFailed)
+		hookEnv := *baseHookEnv
+		hookEnv.Version = latestVersion
+		hookEnv.Error = err.Error()
+		runHook("on-apply-failed", onApplyFailed, &hookEnv)
 		return fmt.Errorf("failed to apply schema: %w", err)
 	}
 
@@ -361,18 +383,20 @@ func runSync(ctx context.Context, client S3Client, cli *CLI, dbHost, dbPort, dbU
 	}
 
 	// Run on-apply-succeeded hook
-	runHook("on-apply-succeeded", onApplySucceeded)
+	successHookEnv := *baseHookEnv
+	successHookEnv.Version = latestVersion
+	runHook("on-apply-succeeded", onApplySucceeded, &successHookEnv)
 
 	slog.Info("Successfully applied schema", "version", latestVersion)
 	return nil
 }
 
-func runHook(name, command string) {
+func runHook(name, command string, hookEnv *HookEnv) {
 	if command == "" {
 		return
 	}
 	slog.Info("Running hook", "hook", name)
-	if err := runCommand(command); err != nil {
+	if err := runCommandWithEnv(command, hookEnv); err != nil {
 		slog.Error("Hook command failed", "hook", name, "error", err)
 	}
 }
@@ -631,10 +655,55 @@ func runPsqldefOffline(currentSchema, desiredSchema []byte) error {
 	return cmd.Run()
 }
 
+// HookEnv contains environment variables to pass to hook commands
+type HookEnv struct {
+	S3Bucket      string
+	PathPrefix    string
+	SchemaFile    string
+	Version       string
+	Error         string
+	CompletedFile string
+	AppVersion    string
+}
+
+// toEnvVars converts HookEnv to a slice of environment variable strings
+func (h *HookEnv) toEnvVars() []string {
+	env := os.Environ()
+	if h.S3Bucket != "" {
+		env = append(env, "DB_SCHEMA_SYNC_S3_BUCKET="+h.S3Bucket)
+	}
+	if h.PathPrefix != "" {
+		env = append(env, "DB_SCHEMA_SYNC_PATH_PREFIX="+h.PathPrefix)
+	}
+	if h.SchemaFile != "" {
+		env = append(env, "DB_SCHEMA_SYNC_SCHEMA_FILE="+h.SchemaFile)
+	}
+	if h.Version != "" {
+		env = append(env, "DB_SCHEMA_SYNC_VERSION="+h.Version)
+	}
+	if h.Error != "" {
+		env = append(env, "DB_SCHEMA_SYNC_ERROR="+h.Error)
+	}
+	if h.CompletedFile != "" {
+		env = append(env, "DB_SCHEMA_SYNC_COMPLETED_FILE="+h.CompletedFile)
+	}
+	if h.AppVersion != "" {
+		env = append(env, "DB_SCHEMA_SYNC_APP_VERSION="+h.AppVersion)
+	}
+	return env
+}
+
 func runCommand(command string) error {
+	return runCommandWithEnv(command, nil)
+}
+
+func runCommandWithEnv(command string, hookEnv *HookEnv) error {
 	cmd := exec.Command("sh", "-c", command)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	if hookEnv != nil {
+		cmd.Env = hookEnv.toEnvVars()
+	}
 	return cmd.Run()
 }
 

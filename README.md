@@ -6,7 +6,9 @@ A tool to synchronize database schemas from S3 using psqldef.
 
 - Periodically polls S3 for schema file updates (watch mode)
 - Single-shot schema application (apply mode)
-- Diff between S3 schema and local file (diff mode)
+- Plan mode for offline schema comparison (plan mode)
+- Fetch latest completed schema from S3 (fetch-completed mode)
+- Export schema after apply and upload to S3
 - Semantic version sorting for schema versions
 - Uses psqldef for safe schema migrations
 - Lifecycle hooks for startup, success, and error notifications
@@ -23,9 +25,10 @@ This project is licensed under the MIT License.
 ### Subcommands
 
 ```
-db-schema-sync watch   # Run in daemon mode, continuously polling for schema updates
-db-schema-sync apply   # Apply schema once and exit
-db-schema-sync diff    # Show diff between S3 schema and local file
+db-schema-sync watch            # Run in daemon mode, continuously polling for schema updates
+db-schema-sync apply            # Apply schema once and exit
+db-schema-sync plan             # Show DDL changes between S3 schema and local file (like terraform plan)
+db-schema-sync fetch-completed  # Fetch latest completed schema from S3
 ```
 
 ### How it works
@@ -45,8 +48,9 @@ The tool finds all versions of the schema file and applies the one with the high
 When a new schema file is detected:
 1. The tool downloads the latest schema file
 2. Applies the schema using psqldef
-3. Creates a completion marker file in S3
-4. Executes the on-apply-succeeded hook (if specified)
+3. (Optional) Exports the current database schema and uploads to S3 as `exported.sql`
+4. Creates a completion marker file in S3
+5. Executes the on-apply-succeeded hook (if specified)
 
 ### Configuration
 
@@ -71,6 +75,12 @@ All options can be set via **environment variables** or **CLI flags**. CLI flags
 | `--db-user` | `DB_USER` | Database user | Yes |
 | `--db-password` | `DB_PASSWORD` | Database password | Yes |
 | `--db-name` | `DB_NAME` | Database name | Yes |
+
+#### Export Settings (watch/apply only)
+
+| Flag | Environment Variable | Description | Default |
+|------|---------------------|-------------|---------|
+| `--export-after-apply` | `EXPORT_AFTER_APPLY` | Export schema after successful apply and upload to S3 as `exported.sql` | false |
 
 #### Watch Mode Settings
 
@@ -168,16 +178,49 @@ db-schema-sync apply \
   --db-name mydb
 ```
 
-#### Diff mode (compare with local file):
+#### Apply mode with schema export:
 
 ```bash
-db-schema-sync diff \
+db-schema-sync apply \
+  --s3-bucket my-bucket \
+  --path-prefix schemas/ \
+  --db-host localhost \
+  --db-port 5432 \
+  --db-user user \
+  --db-password pass \
+  --db-name mydb \
+  --export-after-apply
+```
+
+This exports the database schema after successful apply and uploads it to S3 as `exported.sql` in the same directory as `schema.sql`.
+
+#### Plan mode (show DDL changes):
+
+```bash
+db-schema-sync plan \
   --s3-bucket my-bucket \
   --path-prefix schemas/ \
   schema.sql
 ```
 
-This shows the diff between the latest completed schema in S3 and your local `schema.sql` file. Useful for reviewing changes before creating a PR.
+This shows the DDL changes that would be applied when migrating from the current S3 schema (`exported.sql` or `schema.sql`) to your local `schema.sql` file. Uses psqldef's offline mode, so no database connection is required. Useful for reviewing changes before creating a PR (like `terraform plan`).
+
+#### Fetch completed schema from S3:
+
+```bash
+# Output to stdout
+db-schema-sync fetch-completed \
+  --s3-bucket my-bucket \
+  --path-prefix schemas/
+
+# Save to file
+db-schema-sync fetch-completed \
+  --s3-bucket my-bucket \
+  --path-prefix schemas/ \
+  -o current-schema.sql
+```
+
+This fetches the latest completed schema (`exported.sql` or `schema.sql`) from S3.
 
 #### Using environment variables:
 

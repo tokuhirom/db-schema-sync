@@ -55,3 +55,9 @@ s3://bucket/path-prefix/
 - Use `github.com/lib/pq` for PostgreSQL connections (advisory lock)
 - Use `github.com/alecthomas/kong` for CLI parsing
 - Mock S3Client interface for unit tests
+
+## Git & Pull Requests
+
+- **PR titles and descriptions must be written in English**
+- Use conventional commit format: `feat:`, `fix:`, `docs:`, `ci:`, `chore:`, etc.
+- Keep commits atomic and focused on a single change

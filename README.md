@@ -696,23 +696,20 @@ jobs:
       - name: Checkout PR branch
         uses: actions/checkout@v4
 
-      - name: Download db-schema-sync
-        run: |
-          curl -L -o db-schema-sync https://github.com/tokuhirom/db-schema-sync/releases/latest/download/db-schema-sync-linux-amd64
-          chmod +x db-schema-sync
-
       - name: Generate schema diff
         id: diff
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: us-east-1
         run: |
           # Run plan command and capture output
-          ./db-schema-sync plan \
+          docker run --rm \
+            -e AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }} \
+            -e AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }} \
+            -e AWS_DEFAULT_REGION=us-east-1 \
+            -v $(pwd):/work \
+            ghcr.io/tokuhirom/db-schema-sync:latest \
+            plan \
             --s3-bucket ${{ secrets.S3_BUCKET }} \
             --path-prefix schemas/ \
-            schema.sql > diff.txt 2>&1 || true
+            /work/schema.sql > diff.txt 2>&1 || true
 
           # Create formatted comment body
           echo "DIFF<<EOF" >> $GITHUB_OUTPUT
@@ -827,35 +824,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup db-schema-sync
-        run: |
-          curl -L -o db-schema-sync https://github.com/tokuhirom/db-schema-sync/releases/latest/download/db-schema-sync-linux-amd64
-          chmod +x db-schema-sync
-          sudo mv db-schema-sync /usr/local/bin/
-
-      - name: Validate schema.sql syntax
-        run: |
-          # Basic syntax check (requires psqldef)
-          if ! command -v psqldef &> /dev/null; then
-            curl -L -o psqldef.tar.gz https://github.com/k0kubun/sqldef/releases/latest/download/psqldef_linux_amd64.tar.gz
-            tar xzf psqldef.tar.gz
-            chmod +x psqldef
-            sudo mv psqldef /usr/local/bin/
-          fi
-
-          # Check if schema.sql has valid SQL syntax
-          echo "Validating schema.sql syntax..."
-          psqldef --help > /dev/null
-
       - name: Generate and post diff
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: us-east-1
         run: |
-          db-schema-sync plan \
+          docker run --rm \
+            -e AWS_ACCESS_KEY_ID \
+            -e AWS_SECRET_ACCESS_KEY \
+            -e AWS_DEFAULT_REGION \
+            -v $(pwd):/work \
+            ghcr.io/tokuhirom/db-schema-sync:latest \
+            plan \
             --s3-bucket ${{ secrets.S3_BUCKET }} \
             --path-prefix schemas/ \
-            schema.sql > diff.txt 2>&1 || true
+            /work/schema.sql > diff.txt 2>&1 || true
 
           # Post as PR comment
           gh pr comment ${{ github.event.pull_request.number }} \

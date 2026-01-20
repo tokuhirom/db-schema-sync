@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.0.16](https://github.com/tokuhirom/db-schema-sync/compare/v0.0.15...v0.0.16) - 2026-01-20
+- ci: change flake.nix update from PR to direct commit by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/41
+- docs: add PR language requirement to CLAUDE.md by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/43
+
 ## [v0.0.15](https://github.com/tokuhirom/db-schema-sync/compare/v0.0.14...v0.0.15) - 2026-01-20
 - chore: update flake.nix to v0.0.14 by @tokuhirom-tagpr[bot] in https://github.com/tokuhirom/db-schema-sync/pull/37
 - docs: enhance README with comprehensive workflow examples and CI/CD integration by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/39

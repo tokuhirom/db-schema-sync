@@ -322,46 +322,11 @@ When hook commands are executed, the following environment variables are availab
 | `DB_SCHEMA_SYNC_STDERR` | psqldef stderr output | on-apply-failed |
 | `DB_SCHEMA_SYNC_DRY_RUN` | psqldef --dry-run output (DDL to be applied) | on-before-apply |
 
-**Example Hooks:**
+**Example Hook:**
 
-**Simple Slack notification (one-liner):**
-```bash
-db-schema-sync watch \
-  --on-apply-succeeded 'curl -X POST $SLACK_WEBHOOK_URL -H "Content-Type: application/json" -d "{\"text\":\"Schema $DB_SCHEMA_SYNC_VERSION applied successfully\"}"'
-```
-
-**Using a shell script file:**
-```bash
-# Create a script file for complex logic
-cat > /usr/local/bin/notify-slack.sh <<'EOF'
-#!/bin/bash
-curl -X POST "$SLACK_WEBHOOK_URL" \
-  -H 'Content-Type: application/json' \
-  -d "{\"text\":\"✅ Schema $DB_SCHEMA_SYNC_VERSION applied to $DB_NAME\"}"
-EOF
-chmod +x /usr/local/bin/notify-slack.sh
-
-# Reference the script file in the hook
-db-schema-sync watch \
-  --on-apply-succeeded /usr/local/bin/notify-slack.sh
-```
-
-**Log to file:**
-```bash
-db-schema-sync watch \
-  --on-apply-succeeded 'echo "$(date): Applied schema $DB_SCHEMA_SYNC_VERSION" >> /var/log/schema-sync.log'
-```
-
-**Error notification:**
 ```bash
 db-schema-sync watch \
   --on-apply-failed 'curl -X POST $SLACK_WEBHOOK_URL -H "Content-Type: application/json" -d "{\"text\":\"❌ Schema apply failed: $DB_SCHEMA_SYNC_ERROR\"}"'
-```
-
-**Multiple commands (using semicolon or &&):**
-```bash
-db-schema-sync watch \
-  --on-apply-succeeded 'logger "Schema $DB_SCHEMA_SYNC_VERSION applied"; curl -X POST $SLACK_WEBHOOK_URL -d "{\"text\":\"Done\"}"'
 ```
 
 #### AWS Credentials

@@ -612,19 +612,6 @@ applications:
           secretVersion: 1
 ```
 
-**Deploy using apprun-dedicated-provisioner:**
-
-```bash
-# Preview changes
-apprun-dedicated-provisioner plan -c apprun.yaml
-
-# Apply configuration (creates version but doesn't activate)
-apprun-dedicated-provisioner apply -c apprun.yaml
-
-# Apply and activate immediately
-apprun-dedicated-provisioner apply -c apprun.yaml --activate
-```
-
 **Key Points:**
 
 1. **Single Instance**: `fixedScale: 1` ensures only one watch container runs (prevents concurrent applies)

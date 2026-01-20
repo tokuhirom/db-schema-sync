@@ -786,23 +786,11 @@ jobs:
 
 ### Lifecycle Hook Examples for Production
 
-**Slack notification with inline command:**
+**Example with inline command:**
 ```bash
 docker run -d \
   -e ON_APPLY_SUCCEEDED='curl -X POST $SLACK_WEBHOOK_URL -H "Content-Type: application/json" -d "{\"text\":\"Schema $DB_SCHEMA_SYNC_VERSION applied\"}"' \
   -e SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL \
-  ghcr.io/tokuhirom/db-schema-sync:latest watch
-```
-
-**Using external script file:**
-
-If you need complex logic, mount a pre-existing script file:
-
-```bash
-docker run -d \
-  -e ON_APPLY_SUCCEEDED=/scripts/notify-slack.sh \
-  -e SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL \
-  -v /path/to/your/notify-slack.sh:/scripts/notify-slack.sh:ro \
   ghcr.io/tokuhirom/db-schema-sync:latest watch
 ```
 

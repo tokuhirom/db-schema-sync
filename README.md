@@ -330,171 +330,47 @@ When hook commands are executed, the following environment variables are availab
 | `DB_SCHEMA_SYNC_STDERR` | psqldef stderr output | on-apply-failed |
 | `DB_SCHEMA_SYNC_DRY_RUN` | psqldef --dry-run output (DDL to be applied) | on-before-apply |
 
-**Example Hook Scripts:**
+**Example Hooks:**
 
-**Success Notification with DDL Details:**
+**Simple Slack notification (one-liner):**
 ```bash
+db-schema-sync watch \
+  --on-apply-succeeded 'curl -X POST $SLACK_WEBHOOK_URL -H "Content-Type: application/json" -d "{\"text\":\"Schema $DB_SCHEMA_SYNC_VERSION applied successfully\"}"'
+```
+
+**Using a shell script file:**
+```bash
+# Create a script file for complex logic
+cat > /usr/local/bin/notify-slack.sh <<'EOF'
 #!/bin/bash
-# on-apply-succeeded.sh - Detailed success notification
-
-set -euo pipefail
-
-VERSION="${DB_SCHEMA_SYNC_VERSION}"
-DDL="${DB_SCHEMA_SYNC_DRY_RUN:-No DDL output available}"
-
-# Truncate DDL if too long (Slack has message limits)
-if [ ${#DDL} -gt 2000 ]; then
-  DDL="${DDL:0:2000}... (truncated)"
-fi
-
-curl -X POST "${SLACK_WEBHOOK_URL}" \
+curl -X POST "$SLACK_WEBHOOK_URL" \
   -H 'Content-Type: application/json' \
-  -d @- <<EOF
-{
-  "text": "✅ Database schema applied successfully",
-  "blocks": [
-    {
-      "type": "header",
-      "text": {
-        "type": "plain_text",
-        "text": "✅ Schema Applied: $VERSION"
-      }
-    },
-    {
-      "type": "section",
-      "fields": [
-        {
-          "type": "mrkdwn",
-          "text": "*Environment:*\n\${ENVIRONMENT:-production}"
-        },
-        {
-          "type": "mrkdwn",
-          "text": "*Database:*\n\${DB_NAME:-unknown}"
-        },
-        {
-          "type": "mrkdwn",
-          "text": "*Timestamp:*\n$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-        }
-      ]
-    },
-    {
-      "type": "section",
-      "text": {
-        "type": "mrkdwn",
-        "text": "*DDL Changes Applied:*\n\`\`\`\n$DDL\n\`\`\`"
-      }
-    }
-  ]
-}
+  -d "{\"text\":\"✅ Schema $DB_SCHEMA_SYNC_VERSION applied to $DB_NAME\"}"
 EOF
+chmod +x /usr/local/bin/notify-slack.sh
 
-echo "Slack notification sent for version $VERSION"
+# Reference the script file in the hook
+db-schema-sync watch \
+  --on-apply-succeeded /usr/local/bin/notify-slack.sh
 ```
 
-**Failure Notification with Error Details:**
+**Log to file:**
 ```bash
-#!/bin/bash
-# on-apply-failed.sh - Error notification with diagnostics
-
-set -euo pipefail
-
-VERSION="${DB_SCHEMA_SYNC_VERSION}"
-ERROR="${DB_SCHEMA_SYNC_ERROR}"
-STDOUT="${DB_SCHEMA_SYNC_STDOUT:-}"
-STDERR="${DB_SCHEMA_SYNC_STDERR:-}"
-
-# Combine stdout and stderr for debugging
-DEBUG_OUTPUT="STDOUT:\n$STDOUT\n\nSTDERR:\n$STDERR"
-if [ ${#DEBUG_OUTPUT} -gt 2000 ]; then
-  DEBUG_OUTPUT="${DEBUG_OUTPUT:0:2000}... (truncated)"
-fi
-
-curl -X POST "${SLACK_WEBHOOK_URL}" \
-  -H 'Content-Type: application/json' \
-  -d @- <<EOF
-{
-  "text": "❌ Database schema apply FAILED",
-  "blocks": [
-    {
-      "type": "header",
-      "text": {
-        "type": "plain_text",
-        "text": "❌ Schema Apply Failed: $VERSION"
-      }
-    },
-    {
-      "type": "section",
-      "text": {
-        "type": "mrkdwn",
-        "text": "*Error:*\n\`\`\`\n$ERROR\n\`\`\`"
-      }
-    },
-    {
-      "type": "section",
-      "text": {
-        "type": "mrkdwn",
-        "text": "*Debug Output:*\n\`\`\`\n$DEBUG_OUTPUT\n\`\`\`"
-      }
-    },
-    {
-      "type": "context",
-      "elements": [
-        {
-          "type": "mrkdwn",
-          "text": "⚠️ Manual intervention may be required. Check database state."
-        }
-      ]
-    }
-  ]
-}
-EOF
-
-# Also log to stderr for container logs
-echo "ERROR: Schema apply failed for $VERSION: $ERROR" >&2
-exit 0  # Don't fail the hook itself
+db-schema-sync watch \
+  --on-apply-succeeded 'echo "$(date): Applied schema $DB_SCHEMA_SYNC_VERSION" >> /var/log/schema-sync.log'
 ```
 
-**Pre-Apply Validation:**
+**Error notification:**
 ```bash
-#!/bin/bash
-# on-before-apply.sh - Validate DDL before applying
-
-set -euo pipefail
-
-VERSION="${DB_SCHEMA_SYNC_VERSION}"
-DDL="${DB_SCHEMA_SYNC_DRY_RUN}"
-
-echo "Validating DDL for version $VERSION..."
-
-# Example: Check for dangerous operations
-if echo "$DDL" | grep -i "DROP TABLE\|TRUNCATE"; then
-  echo "WARNING: DDL contains DROP or TRUNCATE operations!"
-  echo "$DDL"
-
-  # Send alert to Slack
-  curl -X POST "${SLACK_WEBHOOK_URL}" \
-    -H 'Content-Type: application/json' \
-    -d "{
-      \"text\": \"⚠️ WARNING: Schema $VERSION contains DROP/TRUNCATE operations\",
-      \"blocks\": [{
-        \"type\": \"section\",
-        \"text\": {
-          \"type\": \"mrkdwn\",
-          \"text\": \"*Dangerous DDL detected in version $VERSION:*\n\`\`\`\n$DDL\n\`\`\`\"
-        }
-      }]
-    }"
-fi
-
-# Example: Log DDL to external audit system
-# curl -X POST https://audit.example.com/api/schema-changes \
-#   -H 'Content-Type: application/json' \
-#   -d "{\"version\": \"$VERSION\", \"ddl\": \"$DDL\"}"
-
-echo "Pre-apply validation complete"
+db-schema-sync watch \
+  --on-apply-failed 'curl -X POST $SLACK_WEBHOOK_URL -H "Content-Type: application/json" -d "{\"text\":\"❌ Schema apply failed: $DB_SCHEMA_SYNC_ERROR\"}"'
 ```
 
-**See [GitHub Actions Integration](#github-actions-integration) for more examples of using hooks in production workflows.**
+**Multiple commands (using semicolon or &&):**
+```bash
+db-schema-sync watch \
+  --on-apply-succeeded 'logger "Schema $DB_SCHEMA_SYNC_VERSION applied"; curl -X POST $SLACK_WEBHOOK_URL -d "{\"text\":\"Done\"}"'
+```
 
 #### AWS Credentials
 
@@ -628,7 +504,34 @@ docker run \
 
 ### Production Docker Run
 
-Complete example for running db-schema-sync in watch mode with monitoring and notifications:
+**Simple example with inline hook:**
+
+```bash
+docker run -d \
+  --name db-schema-sync-watch \
+  --restart unless-stopped \
+  -e S3_BUCKET=my-bucket \
+  -e PATH_PREFIX=schemas/ \
+  -e DB_HOST=db.example.com \
+  -e DB_PORT=5432 \
+  -e DB_USER=postgres \
+  -e DB_PASSWORD=secret \
+  -e DB_NAME=mydb \
+  -e INTERVAL=1m \
+  -e METRICS_ADDR=:9090 \
+  -e EXPORT_AFTER_APPLY=true \
+  -e ON_APPLY_SUCCEEDED='curl -X POST $SLACK_WEBHOOK_URL -d "{\"text\":\"Schema $DB_SCHEMA_SYNC_VERSION applied\"}"' \
+  -e SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK \
+  -e AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE \
+  -e AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY \
+  -e AWS_DEFAULT_REGION=us-east-1 \
+  -p 9090:9090 \
+  ghcr.io/tokuhirom/db-schema-sync:latest watch
+```
+
+**Advanced example with script files:**
+
+For complex hook logic, mount script files as volumes:
 
 ```bash
 docker run -d \
@@ -646,7 +549,6 @@ docker run -d \
   -e EXPORT_AFTER_APPLY=true \
   -e ON_APPLY_SUCCEEDED=/scripts/notify-slack.sh \
   -e ON_APPLY_FAILED=/scripts/notify-slack-error.sh \
-  -e ON_BEFORE_APPLY=/scripts/validate-ddl.sh \
   -e SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK \
   -e AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE \
   -e AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY \
@@ -659,7 +561,7 @@ docker run -d \
 **Key Configuration:**
 - `--restart unless-stopped`: Auto-restart on failure
 - `-p 9090:9090`: Expose Prometheus metrics endpoint
-- `-v ./scripts:/scripts:ro`: Mount hook scripts (read-only)
+- `-v ./scripts:/scripts:ro`: Mount hook scripts (read-only, optional for advanced usage)
 - Health check available at `http://localhost:9090/health`
 
 ### Docker Compose
@@ -694,13 +596,15 @@ services:
       METRICS_ADDR: :9090
       EXPORT_AFTER_APPLY: "true"
 
-      # Lifecycle Hooks
+      # Lifecycle Hooks (using script files)
       ON_APPLY_SUCCEEDED: /scripts/notify-slack.sh
       ON_APPLY_FAILED: /scripts/notify-slack-error.sh
       SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL}
+      # Or use inline commands:
+      # ON_APPLY_SUCCEEDED: 'curl -X POST $SLACK_WEBHOOK_URL -d "{\"text\":\"Done\"}"'
 
     volumes:
-      - ./scripts:/scripts:ro
+      - ./scripts:/scripts:ro  # Optional: only needed if using script files
 
     ports:
       - "9090:9090"
@@ -1117,93 +1021,36 @@ jobs:
           echo "🚀 Deployed schema version $VERSION"
 ```
 
-### Lifecycle Hook: Slack Notification
+### Lifecycle Hook Examples for Production
 
-Create a notification script to run when schema is applied successfully.
-
+**Simple Slack notification (inline):**
 ```bash
-#!/bin/bash
-# notify-slack.sh - Place this in your Docker image or mount as volume
-
-set -euo pipefail
-
-# These environment variables are provided by db-schema-sync
-VERSION="${DB_SCHEMA_SYNC_VERSION}"
-DDL="${DB_SCHEMA_SYNC_DRY_RUN:-No DDL output available}"
-WEBHOOK_URL="${SLACK_WEBHOOK_URL}"  # Set this via environment
-
-# Truncate DDL if too long for Slack
-if [ ${#DDL} -gt 2000 ]; then
-  DDL="${DDL:0:2000}... (truncated)"
-fi
-
-# Send to Slack
-curl -X POST "$WEBHOOK_URL" \
-  -H 'Content-Type: application/json' \
-  -d @- <<EOF
-{
-  "text": "✅ Database schema applied successfully",
-  "blocks": [
-    {
-      "type": "header",
-      "text": {
-        "type": "plain_text",
-        "text": "✅ Schema Applied: $VERSION"
-      }
-    },
-    {
-      "type": "section",
-      "fields": [
-        {
-          "type": "mrkdwn",
-          "text": "*Version:*\n$VERSION"
-        },
-        {
-          "type": "mrkdwn",
-          "text": "*Database:*\n${DB_NAME:-unknown}"
-        }
-      ]
-    },
-    {
-      "type": "section",
-      "text": {
-        "type": "mrkdwn",
-        "text": "*DDL Changes Applied:*\n\`\`\`\n$DDL\n\`\`\`"
-      }
-    }
-  ]
-}
-EOF
-
-echo "Slack notification sent for version $VERSION"
+docker run -d \
+  -e ON_APPLY_SUCCEEDED='curl -X POST $SLACK_WEBHOOK_URL -H "Content-Type: application/json" -d "{\"text\":\"Schema $DB_SCHEMA_SYNC_VERSION applied\"}"' \
+  -e SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL \
+  ghcr.io/tokuhirom/db-schema-sync:latest watch
 ```
 
-**Usage with Docker:**
+**Using external script for complex logic:**
+
+If you need complex notification logic, create a script file and mount it:
 
 ```bash
+# Create notify-slack.sh
+cat > notify-slack.sh <<'EOF'
+#!/bin/bash
+curl -X POST "$SLACK_WEBHOOK_URL" \
+  -H 'Content-Type: application/json' \
+  -d "{\"text\":\"✅ Schema $DB_SCHEMA_SYNC_VERSION applied to $DB_NAME\"}"
+EOF
+chmod +x notify-slack.sh
+
+# Mount and use the script
 docker run -d \
   -e ON_APPLY_SUCCEEDED=/scripts/notify-slack.sh \
   -e SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL \
   -v ./notify-slack.sh:/scripts/notify-slack.sh:ro \
   ghcr.io/tokuhirom/db-schema-sync:latest watch
-```
-
-**AWS Secrets Manager Integration:**
-
-For production environments, fetch webhook URL from secrets manager:
-
-```bash
-#!/bin/bash
-# notify-slack-with-secrets.sh
-
-# Fetch webhook URL from AWS Secrets Manager
-WEBHOOK_URL=$(aws secretsmanager get-secret-value \
-  --secret-id prod/slack/webhook \
-  --query SecretString \
-  --output text)
-
-export SLACK_WEBHOOK_URL="$WEBHOOK_URL"
-/scripts/notify-slack.sh
 ```
 
 ## Version Formats

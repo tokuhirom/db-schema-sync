@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.0.15](https://github.com/tokuhirom/db-schema-sync/compare/v0.0.14...v0.0.15) - 2026-01-20
+- chore: update flake.nix to v0.0.14 by @tokuhirom-tagpr[bot] in https://github.com/tokuhirom/db-schema-sync/pull/37
+- docs: enhance README with comprehensive workflow examples and CI/CD integration by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/39
+
 ## [v0.0.14](https://github.com/tokuhirom/db-schema-sync/compare/v0.0.13...v0.0.14) - 2026-01-20
 - feat: add Nix flake support with automated hash updates by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/35
 

@@ -558,158 +558,136 @@ docker run -d \
 
 ### Sakura Cloud AppRun Deployment
 
-Example configuration for deploying the watch container in Sakura Cloud's AppRun service:
+Example configuration for deploying db-schema-sync using [apprun-dedicated-provisioner](https://github.com/tokuhirom/apprun-dedicated-provisioner):
 
 ```yaml
-# apprun-config.yml
-apiVersion: apprun.sakura.ad.jp/v1alpha1
-kind: Application
-metadata:
-  name: db-schema-sync-watch
-spec:
-  # Container Configuration
-  image: ghcr.io/tokuhirom/db-schema-sync:latest
-  command: ["watch"]
+# apprun.yaml
+clusterName: "your-cluster-name"
 
-  # Resource Allocation
-  cpu: 500        # mCPU (0.5 cores)
-  memory: 512     # MB
+applications:
+  - name: "db-schema-sync-watch"
+    spec:
+      # Use the image specified in config
+      useConfigImage: true
+      image: "ghcr.io/tokuhirom/db-schema-sync:latest"
+      cmd: ["watch"]
 
-  # Scaling Configuration
-  scalingMode: manual
-  fixedScale: 1   # Single instance (watch mode should run only once per database)
+      # Resource Allocation
+      cpu: 500        # mCPU (0.5 cores)
+      memory: 512     # MB
 
-  # Health Check
-  healthCheck:
-    path: /health
-    port: 9090
-    intervalSeconds: 30
-    timeoutSeconds: 5
-    failureThreshold: 3
-    initialDelaySeconds: 10
+      # Scaling Configuration (single instance for watch mode)
+      scalingMode: "manual"
+      fixedScale: 1   # Only one instance should run per database
 
-  # Network Configuration
-  ports:
-    - name: metrics
-      containerPort: 9090
-      protocol: TCP
-      # No public load balancer - internal only
-      loadBalancer: null
+      # Expose metrics endpoint (internal only)
+      exposedPorts:
+        - targetPort: 9090
+          loadBalancerPort: null  # No public load balancer
+          healthCheck:
+            path: "/health"
+            intervalSeconds: 30
+            timeoutSeconds: 5
 
-  # Environment Variables
-  env:
-    # S3 Configuration
-    - key: S3_BUCKET
-      value: my-bucket
-      secret: false
-    - key: PATH_PREFIX
-      value: schemas/
-      secret: false
-    - key: S3_ENDPOINT
-      value: https://s3.isk01.sakurastorage.jp
-      secret: false
+      # Environment Variables
+      env:
+        # S3 Configuration
+        - key: "S3_BUCKET"
+          value: "my-bucket"
+          secret: false
+        - key: "PATH_PREFIX"
+          value: "schemas/"
+          secret: false
+        - key: "S3_ENDPOINT"
+          value: "https://s3.isk01.sakurastorage.jp"
+          secret: false
 
-    # AWS Credentials (using AppRun secrets)
-    - key: AWS_ACCESS_KEY_ID
-      value: your-access-key-id
-      secret: true
-      secretVersion: 1
-    - key: AWS_SECRET_ACCESS_KEY
-      value: your-secret-access-key
-      secret: true
-      secretVersion: 1
+        # AWS Credentials (secret values)
+        - key: "AWS_ACCESS_KEY_ID"
+          secret: true
+          secretVersion: 1
+        - key: "AWS_SECRET_ACCESS_KEY"
+          secret: true
+          secretVersion: 1
 
-    # Database Configuration
-    - key: DB_HOST
-      value: db.example.com
-      secret: false
-    - key: DB_PORT
-      value: "5432"
-      secret: false
-    - key: DB_USER
-      value: postgres
-      secret: false
-    - key: DB_NAME
-      value: mydb
-      secret: false
-    - key: DB_PASSWORD
-      value: your-db-password
-      secret: true
-      secretVersion: 1
+        # Database Configuration
+        - key: "DB_HOST"
+          value: "db.example.com"
+          secret: false
+        - key: "DB_PORT"
+          value: "5432"
+          secret: false
+        - key: "DB_USER"
+          value: "postgres"
+          secret: false
+        - key: "DB_NAME"
+          value: "mydb"
+          secret: false
+        - key: "DB_PASSWORD"
+          secret: true
+          secretVersion: 1
 
-    # Watch Mode Settings
-    - key: INTERVAL
-      value: 1m
-      secret: false
-    - key: METRICS_ADDR
-      value: :9090
-      secret: false
-    - key: EXPORT_AFTER_APPLY
-      value: "true"
-      secret: false
+        # Watch Mode Settings
+        - key: "INTERVAL"
+          value: "1m"
+          secret: false
+        - key: "METRICS_ADDR"
+          value: ":9090"
+          secret: false
+        - key: "EXPORT_AFTER_APPLY"
+          value: "true"
+          secret: false
 
-    # Lifecycle Hooks (if using custom image with scripts)
-    # - key: ON_APPLY_SUCCEEDED
-    #   value: /scripts/notify-slack.sh
-    #   secret: false
-    # - key: SLACK_WEBHOOK_URL
-    #   value: your-webhook-url
-    #   secret: true
-    #   secretVersion: 1
-
----
-# Secrets (create these separately via AppRun console or CLI)
-apiVersion: v1
-kind: Secret
-metadata:
-  name: aws-credentials
-type: Opaque
-stringData:
-  access_key_id: AKIAIOSFODNN7EXAMPLE
-  secret_access_key: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
-
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: db-credentials
-type: Opaque
-stringData:
-  password: your-db-password
-
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: slack-credentials
-type: Opaque
-stringData:
-  webhook_url: https://hooks.slack.com/services/YOUR/WEBHOOK/URL
+        # Lifecycle Hooks (inline command)
+        - key: "ON_APPLY_SUCCEEDED"
+          value: 'curl -X POST $SLACK_WEBHOOK_URL -d "{\"text\":\"Schema applied\"}"'
+          secret: false
+        - key: "SLACK_WEBHOOK_URL"
+          secret: true
+          secretVersion: 1
 ```
 
-**Key Points for AppRun Deployment:**
+**Deploy using apprun-dedicated-provisioner:**
 
-1. **Single Replica**: Set `fixedScale: 1` to ensure only one instance runs (prevents concurrent schema applies)
-2. **Health Check**: Uses the `/health` endpoint on port 9090
-3. **Internal Metrics**: Metrics port is not exposed to public load balancer
-4. **Secrets Management**: Credentials stored in AppRun secrets, not in config
-5. **S3 Endpoint**: Use Sakura Cloud's S3 endpoint for optimal performance
-6. **Resource Sizing**: 500 mCPU / 512 MB is typically sufficient for watch mode
+```bash
+# Preview changes
+apprun-dedicated-provisioner plan -c apprun.yaml
+
+# Apply configuration (creates version but doesn't activate)
+apprun-dedicated-provisioner apply -c apprun.yaml
+
+# Apply and activate immediately
+apprun-dedicated-provisioner apply -c apprun.yaml --activate
+```
+
+**Key Points:**
+
+1. **Single Instance**: `fixedScale: 1` ensures only one watch container runs (prevents concurrent applies)
+2. **Secret Management**: Use `secret: true` + `secretVersion` for sensitive values (actual values set via provisioner)
+3. **Health Check**: Monitors `/health` endpoint for container health
+4. **No Public LB**: `loadBalancerPort: null` keeps metrics internal
+5. **S3 Endpoint**: Use Sakura Cloud's S3 endpoint for best performance
+
+**Setting Secret Values:**
+
+When applying the config, you'll be prompted for secret values, or you can set them via environment:
+
+```bash
+export AWS_ACCESS_KEY_ID="your-access-key"
+export AWS_SECRET_ACCESS_KEY="your-secret-key"
+export DB_PASSWORD="your-db-password"
+export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
+
+apprun-dedicated-provisioner apply -c apprun.yaml --activate
+```
 
 **Monitoring:**
 
-Access metrics internally via:
+Access metrics from another container in the same cluster:
 ```bash
-# From another container in the same AppRun network
 curl http://db-schema-sync-watch:9090/metrics
+curl http://db-schema-sync-watch:9090/health
 ```
-
-**Updating Schema:**
-
-1. Upload new schema version to S3 (via GitHub Actions or manual)
-2. Watch container detects change within `INTERVAL` period
-3. Applies schema automatically
-4. Check logs in AppRun console for apply status
 
 #### Using S3-compatible storage (e.g., Sakura Cloud, MinIO):
 

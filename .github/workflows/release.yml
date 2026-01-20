@@ -8,7 +8,6 @@ on:
 permissions:
   contents: write
   packages: write
-  pull-requests: write
 
 jobs:
   release:
@@ -92,15 +91,10 @@ jobs:
 
           echo "Updated flake.nix to version $VERSION"
 
-      - name: Create Pull Request
-        uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7.0.11
-        with:
-          token: ${{ steps.app-token.outputs.token }}
-          commit-message: "chore: update flake.nix to v${{ steps.version.outputs.version }}"
-          title: "chore: update flake.nix to v${{ steps.version.outputs.version }}"
-          body: |
-            Automatically generated after release v${{ steps.version.outputs.version }}.
-
-            This PR updates `flake.nix` with the new version and checksums.
-          branch: update-flake-${{ steps.version.outputs.version }}
-          delete-branch: true
+      - name: Commit and push changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add flake.nix
+          git commit -m "chore: update flake.nix to v${{ steps.version.outputs.version }}"
+          git push

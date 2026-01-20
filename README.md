@@ -628,23 +628,10 @@ apprun-dedicated-provisioner apply -c apprun.yaml --activate
 **Key Points:**
 
 1. **Single Instance**: `fixedScale: 1` ensures only one watch container runs (prevents concurrent applies)
-2. **Secret Management**: Use `secret: true` + `secretVersion` for sensitive values (actual values set via provisioner)
+2. **Secret Management**: Use `secret: true` + `secretVersion` for sensitive values
 3. **Health Check**: Monitors `/health` endpoint for container health
 4. **No Public LB**: `loadBalancerPort: null` keeps metrics internal
 5. **S3 Endpoint**: Use Sakura Cloud's S3 endpoint for best performance
-
-**Setting Secret Values:**
-
-When applying the config, you'll be prompted for secret values, or you can set them via environment:
-
-```bash
-export AWS_ACCESS_KEY_ID="your-access-key"
-export AWS_SECRET_ACCESS_KEY="your-secret-key"
-export DB_PASSWORD="your-db-password"
-export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
-
-apprun-dedicated-provisioner apply -c apprun.yaml --activate
-```
 
 **Monitoring:**
 

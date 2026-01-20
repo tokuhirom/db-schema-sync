@@ -8,6 +8,7 @@ on:
 permissions:
   contents: write
   packages: write
+  pull-requests: write
 
 jobs:
   release:
@@ -37,3 +38,69 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  update-flake:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1.12.0
+        id: app-token
+        with:
+          app-id: ${{ vars.TAGPR_APP_ID }}
+          private-key: ${{ secrets.TAGPR_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: main
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Get version
+        id: version
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Download checksums
+        run: |
+          gh release download "v${{ steps.version.outputs.version }}" --pattern 'db-schema-sync_${{ steps.version.outputs.version }}_checksums.txt'
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Update flake.nix
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          CHECKSUMS_FILE="db-schema-sync_${VERSION}_checksums.txt"
+
+          # Extract hashes
+          LINUX_AMD64=$(grep linux_amd64 "$CHECKSUMS_FILE" | awk '{print $1}')
+          LINUX_ARM64=$(grep linux_arm64 "$CHECKSUMS_FILE" | awk '{print $1}')
+          DARWIN_AMD64=$(grep darwin_amd64 "$CHECKSUMS_FILE" | awk '{print $1}')
+          DARWIN_ARM64=$(grep darwin_arm64 "$CHECKSUMS_FILE" | awk '{print $1}')
+
+          # Remove checksums file to avoid committing it
+          rm "$CHECKSUMS_FILE"
+
+          # Update version
+          sed -i "s/version = \"[^\"]*\"/version = \"$VERSION\"/" flake.nix
+
+          # Update hashes
+          sed -i "s/\"x86_64-linux\" = \"[^\"]*\"/\"x86_64-linux\" = \"$LINUX_AMD64\"/" flake.nix
+          sed -i "s/\"aarch64-linux\" = \"[^\"]*\"/\"aarch64-linux\" = \"$LINUX_ARM64\"/" flake.nix
+          sed -i "s/\"x86_64-darwin\" = \"[^\"]*\"/\"x86_64-darwin\" = \"$DARWIN_AMD64\"/" flake.nix
+          sed -i "s/\"aarch64-darwin\" = \"[^\"]*\"/\"aarch64-darwin\" = \"$DARWIN_ARM64\"/" flake.nix
+
+          echo "Updated flake.nix to version $VERSION"
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7.0.11
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          commit-message: "chore: update flake.nix to v${{ steps.version.outputs.version }}"
+          title: "chore: update flake.nix to v${{ steps.version.outputs.version }}"
+          body: |
+            Automatically generated after release v${{ steps.version.outputs.version }}.
+
+            This PR updates `flake.nix` with the new version and checksums.
+          branch: update-flake-${{ steps.version.outputs.version }}
+          delete-branch: true

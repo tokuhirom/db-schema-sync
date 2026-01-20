@@ -121,14 +121,6 @@ This tool monitors an S3 bucket for schema file updates. Schema files are organi
 
 ```
 s3://my-bucket/schemas/
-├── v1/
-│   ├── schema.sql           # Desired schema state
-│   ├── completed            # Marker file (created after successful apply)
-│   └── exported.sql         # Actual schema after apply (optional)
-├── v2/
-│   ├── schema.sql
-│   ├── completed
-│   └── exported.sql
 ├── 20260115120000/          # Timestamp version
 │   ├── schema.sql
 │   ├── completed
@@ -564,75 +556,6 @@ docker run -d \
 - `-v ./scripts:/scripts:ro`: Mount hook scripts (read-only, optional for advanced usage)
 - Health check available at `http://localhost:9090/health`
 
-### Docker Compose
-
-```yaml
-# docker-compose.yml
-version: '3.8'
-
-services:
-  db-schema-sync:
-    image: ghcr.io/tokuhirom/db-schema-sync:latest
-    command: watch
-    restart: unless-stopped
-
-    environment:
-      # S3 Configuration
-      S3_BUCKET: my-bucket
-      PATH_PREFIX: schemas/
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
-      AWS_DEFAULT_REGION: us-east-1
-
-      # Database Configuration
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_USER: postgres
-      DB_PASSWORD: ${DB_PASSWORD}
-      DB_NAME: mydb
-
-      # Watch Mode Settings
-      INTERVAL: 1m
-      METRICS_ADDR: :9090
-      EXPORT_AFTER_APPLY: "true"
-
-      # Lifecycle Hooks (using script files)
-      ON_APPLY_SUCCEEDED: /scripts/notify-slack.sh
-      ON_APPLY_FAILED: /scripts/notify-slack-error.sh
-      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL}
-      # Or use inline commands:
-      # ON_APPLY_SUCCEEDED: 'curl -X POST $SLACK_WEBHOOK_URL -d "{\"text\":\"Done\"}"'
-
-    volumes:
-      - ./scripts:/scripts:ro  # Optional: only needed if using script files
-
-    ports:
-      - "9090:9090"
-
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9090/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-
-    depends_on:
-      - postgres
-
-  postgres:
-    image: postgres:16
-    environment:
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-      POSTGRES_DB: mydb
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
-
-volumes:
-  postgres-data:
-```
-
 ### Sakura Cloud AppRun Deployment
 
 Example configuration for deploying the watch container in Sakura Cloud's AppRun service:
@@ -676,56 +599,63 @@ spec:
   # Environment Variables
   env:
     # S3 Configuration
-    - name: S3_BUCKET
+    - key: S3_BUCKET
       value: my-bucket
-    - name: PATH_PREFIX
+      secret: false
+    - key: PATH_PREFIX
       value: schemas/
-    - name: S3_ENDPOINT
+      secret: false
+    - key: S3_ENDPOINT
       value: https://s3.isk01.sakurastorage.jp
+      secret: false
 
     # AWS Credentials (using AppRun secrets)
-    - name: AWS_ACCESS_KEY_ID
-      valueFrom:
-        secretKeyRef:
-          name: aws-credentials
-          key: access_key_id
-    - name: AWS_SECRET_ACCESS_KEY
-      valueFrom:
-        secretKeyRef:
-          name: aws-credentials
-          key: secret_access_key
+    - key: AWS_ACCESS_KEY_ID
+      value: your-access-key-id
+      secret: true
+      secretVersion: 1
+    - key: AWS_SECRET_ACCESS_KEY
+      value: your-secret-access-key
+      secret: true
+      secretVersion: 1
 
     # Database Configuration
-    - name: DB_HOST
+    - key: DB_HOST
       value: db.example.com
-    - name: DB_PORT
+      secret: false
+    - key: DB_PORT
       value: "5432"
-    - name: DB_USER
+      secret: false
+    - key: DB_USER
       value: postgres
-    - name: DB_NAME
+      secret: false
+    - key: DB_NAME
       value: mydb
-    - name: DB_PASSWORD
-      valueFrom:
-        secretKeyRef:
-          name: db-credentials
-          key: password
+      secret: false
+    - key: DB_PASSWORD
+      value: your-db-password
+      secret: true
+      secretVersion: 1
 
     # Watch Mode Settings
-    - name: INTERVAL
+    - key: INTERVAL
       value: 1m
-    - name: METRICS_ADDR
+      secret: false
+    - key: METRICS_ADDR
       value: :9090
-    - name: EXPORT_AFTER_APPLY
+      secret: false
+    - key: EXPORT_AFTER_APPLY
       value: "true"
+      secret: false
 
     # Lifecycle Hooks (if using custom image with scripts)
-    # - name: ON_APPLY_SUCCEEDED
+    # - key: ON_APPLY_SUCCEEDED
     #   value: /scripts/notify-slack.sh
-    # - name: SLACK_WEBHOOK_URL
-    #   valueFrom:
-    #     secretKeyRef:
-    #       name: slack-credentials
-    #       key: webhook_url
+    #   secret: false
+    # - key: SLACK_WEBHOOK_URL
+    #   value: your-webhook-url
+    #   secret: true
+    #   secretVersion: 1
 
 ---
 # Secrets (create these separately via AppRun console or CLI)
@@ -827,17 +757,6 @@ jobs:
         run: |
           curl -L -o db-schema-sync https://github.com/tokuhirom/db-schema-sync/releases/latest/download/db-schema-sync-linux-amd64
           chmod +x db-schema-sync
-
-      - name: Fetch current schema from S3
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: us-east-1
-        run: |
-          ./db-schema-sync fetch-completed \
-            --s3-bucket ${{ secrets.S3_BUCKET }} \
-            --path-prefix schemas/ \
-            -o current-schema.sql
 
       - name: Generate schema diff
         id: diff
@@ -1023,7 +942,7 @@ jobs:
 
 ### Lifecycle Hook Examples for Production
 
-**Simple Slack notification (inline):**
+**Slack notification with inline command:**
 ```bash
 docker run -d \
   -e ON_APPLY_SUCCEEDED='curl -X POST $SLACK_WEBHOOK_URL -H "Content-Type: application/json" -d "{\"text\":\"Schema $DB_SCHEMA_SYNC_VERSION applied\"}"' \
@@ -1031,25 +950,15 @@ docker run -d \
   ghcr.io/tokuhirom/db-schema-sync:latest watch
 ```
 
-**Using external script for complex logic:**
+**Using external script file:**
 
-If you need complex notification logic, create a script file and mount it:
+If you need complex logic, mount a pre-existing script file:
 
 ```bash
-# Create notify-slack.sh
-cat > notify-slack.sh <<'EOF'
-#!/bin/bash
-curl -X POST "$SLACK_WEBHOOK_URL" \
-  -H 'Content-Type: application/json' \
-  -d "{\"text\":\"✅ Schema $DB_SCHEMA_SYNC_VERSION applied to $DB_NAME\"}"
-EOF
-chmod +x notify-slack.sh
-
-# Mount and use the script
 docker run -d \
   -e ON_APPLY_SUCCEEDED=/scripts/notify-slack.sh \
   -e SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL \
-  -v ./notify-slack.sh:/scripts/notify-slack.sh:ro \
+  -v /path/to/your/notify-slack.sh:/scripts/notify-slack.sh:ro \
   ghcr.io/tokuhirom/db-schema-sync:latest watch
 ```
 

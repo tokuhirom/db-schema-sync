@@ -18,19 +18,19 @@
         "aarch64-darwin" = "63861f6724d29b95e1300323455c546b49491f27d55e6bcc9ee749f9aee36c8f";
       };
 
-      # Map Nix system to goreleaser naming
-      systemToGoreleaser = system: {
-        "x86_64-linux" = "5c240028d0fbed37aaac959c060c765b7b6dfff9dd6df68cdc8ff54e8e345242";
-        "aarch64-linux" = "8e1505b073c4c7e371a7437165b09d01904bd8deb3b2de363ee440933406bf2a";
-        "x86_64-darwin" = "31e36492c2ece093d3090774bef3fdab4ec377201e64f6363940bbd0b7e0558c";
-        "aarch64-darwin" = "63861f6724d29b95e1300323455c546b49491f27d55e6bcc9ee749f9aee36c8f";
-      }.${system};
+      # Map Nix system to goreleaser naming (unquoted keys to avoid sed replacement)
+      goreleaserNames = {
+        x86_64-linux = "linux_amd64";
+        aarch64-linux = "linux_arm64";
+        x86_64-darwin = "darwin_amd64";
+        aarch64-darwin = "darwin_arm64";
+      };
 
     in
     flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ] (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-        goreleaserSystem = systemToGoreleaser system;
+        goreleaserSystem = goreleaserNames.${system};
       in
       {
         packages = {

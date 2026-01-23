@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.0.17](https://github.com/tokuhirom/db-schema-sync/compare/v0.0.16...v0.0.17) - 2026-01-23
+- fix: use unquoted keys in goreleaserNames to avoid sed replacement by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/44
+- docs: add archive notice and redirect to dbmate-deployer by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/46
+
 ## [v0.0.16](https://github.com/tokuhirom/db-schema-sync/compare/v0.0.15...v0.0.16) - 2026-01-20
 - ci: change flake.nix update from PR to direct commit by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/41
 - docs: add PR language requirement to CLAUDE.md by @tokuhirom in https://github.com/tokuhirom/db-schema-sync/pull/43

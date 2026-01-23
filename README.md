@@ -1,5 +1,10 @@
 # DB Schema Sync
 
+> [!WARNING]
+> **This project has been archived.** Please use [dbmate-deployer](https://github.com/tokuhirom/dbmate-deployer) instead, which provides similar functionality with dbmate-based migrations.
+
+---
+
 A tool to synchronize database schemas from S3 using psqldef.
 
 ## What is db-schema-sync?
